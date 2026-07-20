@@ -1,7 +1,7 @@
 # Backend
 
-Node.js/TypeScript API + WebSocket server for the free, non-custodial
-On-Chain Backgammon platform. See the repo root's `ARCHITECTURE.md` for the
+Node.js/TypeScript API + WebSocket server for the On-Chain Backgammon
+platform. See the repo root's `ARCHITECTURE.md` for the
 full on-chain/off-chain design; this README covers backend-specific setup,
 testing, and a few implementation notes worth knowing before you read the
 code.

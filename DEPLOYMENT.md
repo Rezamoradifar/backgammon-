@@ -28,6 +28,54 @@ RPC used: `https://bsc-testnet-rpc.publicnode.com`.
 BscScan source verification for these three contracts hasn't been done yet
 - pending.
 
+## Live deployment (Railway)
+
+| Service | URL |
+|---|---|
+| Backend (API + WebSocket) | `https://backgammon-production-d36d.up.railway.app` |
+| Frontend | `https://frontend-production-acc82.up.railway.app` |
+
+Backend, Postgres, and frontend are separate Railway services in the same
+project/environment; the backend talks to Postgres over Railway's private
+network (`postgres.railway.internal`).
+
+### Verified end-to-end against this live deployment
+
+`backend/scripts/smoke-test.mjs` runs the full flow with two real wallets
+against the URLs above and BSC Testnet - SIWE auth, on-chain
+createGame/joinGame/startGame, the indexer picking the game up into a real
+Postgres, the backend's auto-fulfill relayer resolving randomness
+unattended, `forfeitGame` settling the wager, and a real `withdraw()`
+moving real (testnet) BNB - and confirms the fee split lands on the exact
+expected wei amounts. Last run: all steps passed.
+
+Not covered by that script: the WebSocket-based matchmaking/live-room relay
+(pairing two queued players, rolling dice, relaying moves). That needs a
+real browser or an unrestricted WS client to exercise - this repo's own
+dev sandbox couldn't (WebSocket upgrades to arbitrary hosts aren't
+supported through its network policy). Verify that piece by actually
+playing a match through the frontend in a browser with two wallets.
+
+### Two deployment gotchas already fixed here, worth knowing if you redeploy
+
+- **Postgres volume mounted directly at `/var/lib/postgresql/data` breaks
+  `initdb`** (the mount point already has a `lost+found` dir, and Postgres
+  refuses to initialize into a non-empty directory). Fix: mount the volume
+  one level up (`/var/lib/postgresql`) and set `PGDATA` to a subdirectory
+  under it.
+- **`tsc` doesn't copy the indexer's ABI JSON files into `dist/`** since
+  nothing statically imports them (they're loaded via `readFileSync` at
+  runtime) - the container built and started fine, then crashed on ENOENT
+  the moment the indexer initialized. Fixed by an explicit `cp` step in
+  `backend/Dockerfile` after `npm run build`.
+- **A public RPC's free-tier `eth_getLogs` range cap can permanently wedge
+  a naive indexer.** `gameManagerIndexer.ts` no longer uses viem's
+  `watchContractEvent` directly - see its own comment for why (a plain
+  "watch from last block to latest" catch-up range can exceed a provider's
+  cap after any restart/gap, and every poll after that keeps retrying the
+  same oversized, rejected range forever). It now chunks every poll to 40
+  blocks and resumes from the highest block already recorded in Postgres.
+
 ### Wagering, fees, and referral commissions (real money - read this first)
 
 `GameManager.createGame()` now takes `msg.value` as the per-player stake

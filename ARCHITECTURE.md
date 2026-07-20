@@ -2,19 +2,29 @@
 
 ## What this version is, and isn't
 
-This is a **free, non-custodial, skill-game Backgammon platform** on BNB Smart
+This is a **wallet-connected, skill-game Backgammon platform** on BNB Smart
 Chain. Two wallets can create and play a match against each other; the chain
-records who played whom and who won. There is **no wagering, no escrow, no
-entry fee, no prize pool, and no payout** anywhere in this version - the
-contracts hold no player funds at all.
+records who played whom and who won. A match's stake is optional and chosen
+by its creator when calling `createGame` (`msg.value`, 0 = a free/friendly
+match with no escrow or payout at all, same as this project's original
+scope) - `joinGame` must send exactly that amount. When a match is staked,
+`GameManager` escrows both players' funds and, on completion, pays the
+winner minus an owner/platform/marketing fee and up to 3 levels of referral
+commission (see the fee-split table in `DEPLOYMENT.md`); every payout is a
+pull-payment (`pendingWithdrawals` + `withdraw()`), specifically so a single
+reverting fee-recipient address can never freeze every match's settlement -
+see `GameManager`'s contract-level NatSpec and `contracts/contracts/test/Wagering.t.sol`
+for the full reasoning and the tests proving it.
 
 A smart contract does not by itself make real-money wagering legal, remove
 KYC/AML obligations, or exempt a platform from gambling licensing. Those
 requirements are a function of jurisdiction and the actual economic activity
-happening, not of whether a blockchain is involved. This version is
-deliberately scoped to avoid triggering them; a real-money version is a
-separate, future, separately-licensed effort (see "Future regulated modules"
-below), not a checkbox this codebase flips on its own.
+happening, not of whether a blockchain is involved - the multi-level referral
+commission structure specifically tends to sit under its own additional
+regulatory scrutiny in many places, distinct from a gambling license alone.
+That compliance responsibility sits with whoever operates a deployment with
+staking enabled, not with this codebase. See `SECURITY.md` and
+`DEPLOYMENT.md`'s wagering section before enabling it for real funds.
 
 ## System overview
 
@@ -188,21 +198,19 @@ structurally, not by a promise.
 
 ## Future regulated modules (not implemented, not activated)
 
-The following are explicitly **out of scope** for this version, kept behind
-the interface boundaries described above rather than half-wired-in:
+Escrow, fees, and referral commissions are implemented (see above) - what's
+still explicitly **out of scope**, kept behind the interface boundaries
+described above rather than half-wired-in:
 
-- **Escrow / entry fees / prize pools / platform fees / referral
-  commissions**: would require custody of funds, which this version
-  deliberately never takes on. A future module would very likely be a
-  separate contract (not a modification of `GameManager`'s core lifecycle)
-  that references a `GameManager` match by id once it's `COMPLETED`, so the
-  free skill-game path and the regulated wagering path never share
-  custody-bearing code.
 - **KYC/AML**: would live in the backend/off-chain layer (identity is not a
-  smart-contract concern), gating access to the regulated module specifically
-  - not the free game, which needs none of this.
+  smart-contract concern), gating access to staked matches specifically -
+  not the free-match path, which needs none of this.
 - **Geographic restrictions**: same - an off-chain, backend-enforced concern
-  for the regulated module, irrelevant to the free game.
+  for staked matches, irrelevant to a free match.
+- **A production randomness provider**: `MockRandomnessProvider` is
+  dev/testnet-only (see its NatSpec and SECURITY.md) - a real deployment
+  with staking enabled needs a real VRF-backed `IRandomnessProvider`
+  swapped in via `setRandomnessProvider` before it's trustworthy.
 
 None of this is stubbed out with placeholder functions in `GameManager` or
 `PlayerRegistry` - deliberately, so there's no half-finished wagering code

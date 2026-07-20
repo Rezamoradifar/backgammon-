@@ -1,22 +1,26 @@
-# On-Chain Backgammon (free, non-custodial)
+# On-Chain Backgammon
 
-A free-to-play, wallet-connected 1v1 Backgammon platform on BNB Smart Chain.
-No wagering, no wallet-held stakes, no payouts - matches are created, joined,
-started, and recorded on-chain; the game itself is played off-chain by two
-clients running the same deterministic rules engine. See `ARCHITECTURE.md`
-for the full design (on-chain/off-chain split, randomness model, trust
-assumptions) and `SECURITY.md` for the security measures and known
-limitations.
+A wallet-connected 1v1 Backgammon platform on BNB Smart Chain. A match's
+stake is optional and set by its creator (0 = a free/friendly game); when set,
+both players escrow that stake on-chain and the winner is paid out on
+completion, minus an owner/platform/marketing fee and up to 3 levels of
+referral commission - see `DEPLOYMENT.md`'s wagering section for the exact
+split and the compliance responsibility that comes with enabling it for
+real money. Matches are created, joined, started, and recorded on-chain;
+the game itself is played off-chain by two clients running the same
+deterministic rules engine. See `ARCHITECTURE.md` for the full design
+(on-chain/off-chain split, randomness model, trust assumptions) and
+`SECURITY.md` for the security measures and known limitations.
 
 ## Status
 
 | Layer | Status |
 |---|---|
-| Smart contracts (`GameManager`, `PlayerRegistry`, randomness abstraction) | **Done.** Compiled and tested - 34 tests passing, including fuzz tests. |
+| Smart contracts (`GameManager`, `PlayerRegistry`, randomness abstraction, wagering/fee/referral logic) | **Done.** Compiled and tested - 51 tests passing, including fuzz tests and dedicated reentrancy/DoS-safety tests for the wagering payout path. |
 | Backend (Node/TS, Prisma/Postgres, WebSocket matchmaking + move relay, contract indexer) | **Done.** Auth, matchmaking, real-time gameplay relay, and the contract event indexer all verified end-to-end - see `backend/README.md`. |
-| Frontend (Next.js, wagmi/viem/RainbowKit) | **Done.** Landing, lobby (matchmaking -> on-chain game -> live room), gameplay board, leaderboard, history, referral, profile, and settings pages - `tsc`, `eslint`, and `next build` all clean, verified in a real browser. See `frontend/README.md`. |
+| Frontend (Next.js, wagmi/viem/RainbowKit) | **Done.** Landing, lobby (stake amount -> matchmaking -> on-chain game -> live room), gameplay board, leaderboard, history, referral (on-chain), settings (withdraw), and profile pages - `tsc`, `eslint`, and `next build` all clean, verified in a real browser. See `frontend/README.md`. |
 | Docker / deployment configuration | **Done.** Backend ships a `Dockerfile`; frontend deploys as a stock Next.js app. See `DEPLOYMENT.md`. |
-| BNB Chain Testnet deployment | **Done.** `PlayerRegistry`, `MockRandomnessProvider`, and `GameManager` are live on BSC Testnet - addresses in `DEPLOYMENT.md`. Hosting the backend/frontend so the deployment is actually reachable is in progress. |
+| BNB Chain Testnet deployment | **Done, and live.** Contracts, backend, and frontend are all deployed and reachable - see `DEPLOYMENT.md` for addresses and URLs. A real two-wallet smoke test against the live deployment passes end-to-end (auth, on-chain create/join/start, indexing, auto-randomness, wagering payout, withdrawal). |
 
 ## Repository layout
 
