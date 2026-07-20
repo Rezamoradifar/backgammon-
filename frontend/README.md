@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend
 
-## Getting Started
+Next.js (App Router) client for the on-chain Backgammon platform: wallet
+connect, matchmaking, on-chain game creation/joining, and the live gameplay
+board. See the root `../ARCHITECTURE.md` for how this fits with the backend
+and contracts.
 
-First, run the development server:
+## Stack
+
+- Next.js 16 (Turbopack), React 19, TypeScript
+- wagmi v2 + viem for wallet/contract interaction
+- RainbowKit for the wallet-connect UI, restricted to an explicit
+  MetaMask + WalletConnect wallet list (see `lib/wagmi.ts` for why)
+- Plain WebSocket client (`lib/useGameSocket.ts`) for matchmaking and the
+  live gameplay relay against the backend
+
+## Getting started
 
 ```bash
+cp .env.example .env.local   # fill in the backend URL and contract addresses
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000. Without `NEXT_PUBLIC_GAME_MANAGER_ADDRESS` /
+`NEXT_PUBLIC_PLAYER_REGISTRY_ADDRESS` set, matchmaking still pairs players
+but on-chain game creation/joining will fail - see the backend's deploy
+script for producing local addresses to test against.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` is optional for local development:
+without it the wallet list falls back to MetaMask only, since WalletConnect
+v2 requires a real Cloud project id
+(https://cloud.walletconnect.com) to initialize.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Verification
 
-## Learn More
+```bash
+npx tsc --noEmit
+npm run lint
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+All three are clean. The build was additionally checked by running
+`npm run dev` and loading the landing and lobby pages in a real browser
+(dark theme renders, the wallet-connect modal opens, zero console errors).

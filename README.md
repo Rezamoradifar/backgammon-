@@ -14,7 +14,7 @@ limitations.
 |---|---|
 | Smart contracts (`GameManager`, `PlayerRegistry`, randomness abstraction) | **Done.** Compiled and tested - 34 tests passing, including fuzz tests. |
 | Backend (Node/TS, Prisma/Postgres, WebSocket matchmaking + move relay, contract indexer) | **Done.** Auth, matchmaking, real-time gameplay relay, and the contract event indexer all verified end-to-end - see `backend/README.md`. |
-| Frontend (Next.js, wagmi/viem) | Not started. |
+| Frontend (Next.js, wagmi/viem/RainbowKit) | **Done.** Landing, lobby (matchmaking -> on-chain game -> live room), gameplay board, leaderboard, history, referral, profile, and settings pages - `tsc`, `eslint`, and `next build` all clean, verified in a real browser. See `frontend/README.md`. |
 | Docker / deployment configuration | Not started. |
 | BNB Chain Testnet deployment | Not done - requires a funded deployer wallet, which only the project owner can supply (see "Deploying" below). |
 
