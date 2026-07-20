@@ -23,12 +23,13 @@ which is what actually needs a security review before any mainnet deploy.
 - **`AccessControl`** (OpenZeppelin v5): `ARBITER_ROLE` for dispute
   resolution, `PAUSER_ROLE` for the emergency pause switch, `DEFAULT_ADMIN_ROLE`
   for provider swaps, fee-wallet updates (`setOwnerFeeWallet`,
-  `setPlatformFeeWallet`, `setMarketingFeeWallet`), and role management.
-  `DEFAULT_ADMIN_ROLE` can redirect where fees are paid, but cannot touch
-  `pendingWithdrawals` balances already credited to players, referrers, or
-  the fee wallets themselves - see "No hidden owner withdrawal" below.
-  `PlayerRegistry.GAME_MANAGER_ROLE` is the only way stats can be written,
-  restricting it to actual `GameManager` deployments.
+  `setPlatformFeeWallet`, `setMarketingFeeWallet`), and role management,
+  `REWARD_DISTRIBUTOR_ROLE` for the backend's automated weekly top-wagerer
+  reward job (see below). `DEFAULT_ADMIN_ROLE` can redirect where fees are
+  paid, but cannot touch `pendingWithdrawals` balances already credited to
+  players, referrers, or the fee wallets themselves - see "No hidden owner
+  withdrawal" below. `PlayerRegistry.GAME_MANAGER_ROLE` is the only way
+  stats can be written, restricting it to actual `GameManager` deployments.
 - **`Pausable`**: `createGame`, `joinGame`, `startGame`, `submitMove`,
   `submitResult`, `forfeitGame` all respect `whenNotPaused`. Result
   confirmation/dispute/timeout-finalization and cancellation are deliberately
@@ -65,6 +66,7 @@ which is what actually needs a security review before any mainnet deploy.
 | `DEFAULT_ADMIN_ROLE` (`GameManager`, `PlayerRegistry`) | the deployer address (see DEPLOYMENT.md) | Swap the randomness provider; change fee-wallet addresses; grant/revoke roles | Touch any already-credited `pendingWithdrawals` balance; move a player's escrowed stake before a match settles |
 | `ARBITER_ROLE` (`GameManager`) | same deployer address | Resolve a `disputeResult` by naming a winner | Anything outside an actively `DISPUTED` match - see the manual-arbitration limitation below |
 | `PAUSER_ROLE` (`GameManager`) | same deployer address | Pause/unpause `createGame`/`joinGame`/`startGame`/`submitMove`/`submitResult`/`forfeitGame` | Pause result confirmation, dispute, timeout-finalization, or cancellation - deliberately left active even while paused, see "Applied measures" |
+| `REWARD_DISTRIBUTOR_ROLE` (`GameManager`) | a dedicated backend-held key, distinct from the deployer/admin key, whose only job is running the weekly reward cron | Move part of `platformFeeWallet`'s own already-credited balance to that week's top-3-wagerer winners via `distributeWeeklyRewards` | Credit itself or anyone from thin air - blocked by an on-chain balance check against `platformFeeWallet`'s real `pendingWithdrawals` balance; touch any other account's balance (a player's winnings, `ownerFeeWallet`, `marketingFeeWallet`) |
 | `GAME_MANAGER_ROLE` (`PlayerRegistry`) | the `GameManager` contract itself | Record a completed match's stats | Nothing else - it's the only permission this role grants |
 
 On this testnet deployment, one address wears the admin/arbiter/pauser hats
@@ -100,7 +102,7 @@ enabled - it can decide who wins a disputed, real-money match.
 
 ## Testing
 
-51 tests in `contracts/contracts/test/*.t.sol`, run via
+58 tests in `contracts/contracts/test/*.t.sol`, run via
 `npx hardhat test` (Hardhat 3's built-in Solidity test runner; also
 Foundry-`forge test`-compatible, see ARCHITECTURE.md):
 
@@ -117,6 +119,12 @@ Foundry-`forge test`-compatible, see ARCHITECTURE.md):
   actually matter most for a contract holding real funds - a test proving a
   single reverting fee-recipient address can never block the game or
   anyone else's withdrawal, and a dedicated reentrancy test on `withdraw()`.
+  It also covers `distributeWeeklyRewards`: exact winner-credit amounts and
+  the matching debit from `platformFeeWallet`, that it never touches
+  `ownerFeeWallet`/`marketingFeeWallet`, and reverts for every misuse case
+  (no `REWARD_DISTRIBUTOR_ROLE`, mismatched array lengths, an empty winner
+  list, a zero-address winner, or a requested total exceeding what
+  `platformFeeWallet` actually holds).
 - Real bugs were found and fixed by this suite before being merged (not
   hypothetical - this is what actually happened building this version):
   1. `MockRandomnessProvider` originally fulfilled synchronously inside

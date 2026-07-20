@@ -78,6 +78,20 @@ const grantHash = await walletClient.writeContract({
 await publicClient.waitForTransactionReceipt({ hash: grantHash });
 console.log("Granted GAME_MANAGER_ROLE to GameManager");
 
+const rewardRoleHash = await publicClient.readContract({
+  address: gameManagerAddress,
+  abi: gameManagerArtifact.abi,
+  functionName: "REWARD_DISTRIBUTOR_ROLE",
+});
+const rewardGrantHash = await walletClient.writeContract({
+  address: gameManagerAddress,
+  abi: gameManagerArtifact.abi,
+  functionName: "grantRole",
+  args: [rewardRoleHash, admin],
+});
+await publicClient.waitForTransactionReceipt({ hash: rewardGrantHash });
+console.log("Granted REWARD_DISTRIBUTOR_ROLE to deployer (local testing)");
+
 const outputPath = join(__dirname, "deployed-addresses.local.json");
 writeFileSync(outputPath, JSON.stringify({ playerRegistryAddress, randomnessAddress, gameManagerAddress, deployer: admin }, null, 2));
 console.log(`Addresses written to ${outputPath}`);

@@ -29,6 +29,11 @@ import {PlayerRegistry} from "./PlayerRegistry.sol";
 contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessConsumer {
     bytes32 public constant ARBITER_ROLE = keccak256("ARBITER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    /// @dev Granted to the backend's automated weekly-reward job, and only
+    /// lets it move already-credited platformFeeWallet balance to specific
+    /// winners via {distributeWeeklyRewards} - it cannot credit itself or
+    /// anyone from thin air, and cannot touch any other account's balance.
+    bytes32 public constant REWARD_DISTRIBUTOR_ROLE = keccak256("REWARD_DISTRIBUTOR_ROLE");
 
     /// @dev Fee basis points out of BPS_DENOMINATOR, deducted from *each*
     /// player's own stake independently (not the pooled pot) so each side's
@@ -104,6 +109,9 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     error StakeMismatch();
     error NothingToWithdraw();
     error TransferFailed();
+    error ArrayLengthMismatch();
+    error InsufficientPlatformBalance();
+    error EmptyWinnerList();
 
     event GameCreated(uint256 indexed gameId, address indexed creator, uint256 stake);
     event GameJoined(uint256 indexed gameId, address indexed opponent);
@@ -124,6 +132,7 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     event PlatformFeeWalletUpdated(address indexed previous, address indexed next);
     event MarketingFeeWalletUpdated(address indexed previous, address indexed next);
     event Withdrawal(address indexed account, uint256 amount);
+    event WeeklyRewardDistributed(uint256 indexed weekId, address indexed winner, uint256 amount);
 
     modifier onlyPlayer(uint256 gameId) {
         Game storage game = games[gameId];
@@ -411,6 +420,43 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
         (bool ok,) = msg.sender.call{value: amount}("");
         if (!ok) revert TransferFailed();
         emit Withdrawal(msg.sender, amount);
+    }
+
+    // ---------------------------------------------------------------------
+    // Weekly top-wagerer rewards
+    // ---------------------------------------------------------------------
+
+    /// @notice Moves part of platformFeeWallet's own accumulated balance to
+    /// this week's top-wagering-volume winners, as credited
+    /// `pendingWithdrawals` balances they then pull via {withdraw}.
+    /// @dev Restricted to `REWARD_DISTRIBUTOR_ROLE` (the backend's automated
+    /// weekly job). Ranking, tier split, and "who qualifies" are all computed
+    /// off-chain from indexed `GameCreated`/`GameJoined` stake data - this
+    /// function only ever moves already-credited platformFeeWallet balance to
+    /// the addresses/amounts it's given, and can never credit more than
+    /// platformFeeWallet actually holds, or touch any other account's
+    /// balance. `weekId` is an opaque caller-chosen identifier (e.g. an ISO
+    /// week number) recorded in the event for off-chain bookkeeping/idempotency;
+    /// this contract does not itself track which weeks were already paid.
+    function distributeWeeklyRewards(address[] calldata winners, uint256[] calldata amounts, uint256 weekId)
+        external
+        onlyRole(REWARD_DISTRIBUTOR_ROLE)
+    {
+        if (winners.length == 0) revert EmptyWinnerList();
+        if (winners.length != amounts.length) revert ArrayLengthMismatch();
+
+        uint256 total;
+        for (uint256 i; i < amounts.length; i++) {
+            total += amounts[i];
+        }
+        if (pendingWithdrawals[platformFeeWallet] < total) revert InsufficientPlatformBalance();
+
+        pendingWithdrawals[platformFeeWallet] -= total;
+        for (uint256 i; i < winners.length; i++) {
+            if (winners[i] == address(0)) revert ZeroAddress();
+            _credit(winners[i], amounts[i]);
+            emit WeeklyRewardDistributed(weekId, winners[i], amounts[i]);
+        }
     }
 
     // ---------------------------------------------------------------------

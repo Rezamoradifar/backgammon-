@@ -176,6 +176,7 @@ async function findOrThrow(onChainGameId: bigint) {
 async function onGameCreated(config: IndexerConfig, log: DecodedLog): Promise<void> {
   const gameId = log.args.gameId as bigint;
   const creator = (log.args.creator as string).toLowerCase();
+  const stake = (log.args.stake as bigint | undefined) ?? 0n;
 
   const game = await prisma.game.create({
     data: {
@@ -183,6 +184,7 @@ async function onGameCreated(config: IndexerConfig, log: DecodedLog): Promise<vo
       contractAddress: config.gameManagerAddress,
       chainId: config.chain.id,
       state: "WAITING_FOR_PLAYER",
+      stake,
     },
   });
 

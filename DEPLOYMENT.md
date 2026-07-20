@@ -115,6 +115,49 @@ of this escrow/payout logic is strongly recommended before any real user
 funds are ever at risk here - none has been done yet, this has only been
 tested with Foundry-style unit/fuzz tests in this repo.
 
+### Weekly top-wagerer rewards
+
+Once a week, the backend's own job (`backend/src/jobs/weeklyRewards.ts`)
+redirects part of `platformFeeWallet`'s own accumulated 5% cut to that
+week's top 3 wagerers by total stake volume, instead of it just sitting
+there indefinitely:
+
+1. It ranks players by total stake across matches that actually **settled**
+   (`COMPLETED`) in the previous Monday-to-Monday UTC week - a cancelled
+   match refunds in full and pays no fee, so it doesn't count as wagering
+   volume.
+2. It takes the top 3, and splits a pool - the *smaller* of that week's
+   estimated 5% fee accumulation and whatever `platformFeeWallet` actually
+   holds on-chain right now - tiered 50% / 30% / 20% (1st/2nd/3rd).
+3. It calls `GameManager.distributeWeeklyRewards(winners, amounts, weekId)`,
+   which **only** moves already-credited `platformFeeWallet` balance to the
+   named winners' own `pendingWithdrawals` - it cannot invent funds, and
+   can't touch anyone else's balance (`ownerFeeWallet`, `marketingFeeWallet`,
+   any player's own credited winnings). Restricted to `REWARD_DISTRIBUTOR_ROLE`,
+   granted to a backend-held key (`WEEKLY_REWARD_DISTRIBUTOR_KEY`) whose
+   *only* on-chain capability is this one function.
+4. Winners are recorded in Postgres (`WeeklyRewardDistribution`, unique on
+   `[weekId, walletId]`) before the job is considered done for that week -
+   the job checks this table first on every run (it re-checks roughly
+   hourly, not on a precise once-a-week timer, so a restart or missed tick
+   just means "it runs within an hour of when it should have"), which is
+   what actually guarantees a week is never paid out twice, not the hourly
+   cadence itself.
+
+The 50/30/20 tiered split was this codebase's own design choice (the owner
+asked for "tiered, first place gets the most" without specifying exact
+percentages) - change `TIER_SHARES` in `weeklyRewards.ts` if a different
+split is wanted. `platformFeeWallet` still accumulates its normal 5% (plus
+any referral-fallback redirects) every settled match exactly as before;
+this job is what turns part of that ongoing balance into a recurring
+players' prize pool instead of a static fee sink.
+
+**Not yet live**: this function exists in `GameManager.sol` and is fully
+tested (see SECURITY.md), but the *currently deployed* testnet contract
+above predates it - redeploying with the new bytecode (and granting
+`REWARD_DISTRIBUTOR_ROLE` to the backend's job wallet) is a pending step,
+see "Deploying the contracts yourself" below.
+
 ### The MockRandomnessProvider caveat (read this before wiring a backend up)
 
 `MockRandomnessProvider` is explicitly insecure and dev/testnet-only (see its
@@ -140,6 +183,7 @@ relayer entirely.
 ```bash
 cd backend
 OWNER_FEE_WALLET=0x... PLATFORM_FEE_WALLET=0x... MARKETING_FEE_WALLET=0x... \
+REWARD_DISTRIBUTOR_ADDRESS=0x... \
 TESTNET_DEPLOYER_KEY=0x... NODE_USE_ENV_PROXY=1 node scripts/deploy-testnet.mjs
 ```
 
@@ -147,10 +191,13 @@ TESTNET_DEPLOYER_KEY=0x... NODE_USE_ENV_PROXY=1 node scripts/deploy-testnet.mjs
 HTTP(S)_PROXY that Node's built-in `fetch` doesn't pick up automatically -
 harmless otherwise. The three `*_FEE_WALLET` vars all default to the
 deployer address if omitted - `platformFeeWallet` is meant to be changed
-later via `setPlatformFeeWallet` regardless.) Writes
+later via `setPlatformFeeWallet` regardless. `REWARD_DISTRIBUTOR_ADDRESS`
+defaults to the deployer too, but should be the address matching whatever
+key goes into the backend's own `WEEKLY_REWARD_DISTRIBUTOR_KEY`.) Writes
 `scripts/deployed-addresses.testnet.json` (gitignored) with the three
-contract addresses and fee wallets, and grants `GameManager` the
-`GAME_MANAGER_ROLE` on `PlayerRegistry` automatically.
+contract addresses, fee wallets, and reward-distributor address, and grants
+`GameManager` the `GAME_MANAGER_ROLE` on `PlayerRegistry` and
+`REWARD_DISTRIBUTOR_ROLE` to `REWARD_DISTRIBUTOR_ADDRESS` automatically.
 
 Never point this script, or `MockRandomnessProvider`, at BSC mainnet.
 
@@ -175,7 +222,10 @@ approach) can build directly.
      `GAME_MANAGER_ADDRESS`, `PLAYER_REGISTRY_ADDRESS` (the two addresses
      above), `MOCK_RANDOMNESS_PROVIDER_ADDRESS` (the address above),
      `MOCK_RANDOMNESS_RELAYER_KEY` (a funded testnet key - see the caveat
-     above), `JWT_SECRET` (any long random string), `JWT_EXPIRES_IN=7d`.
+     above), `WEEKLY_REWARD_DISTRIBUTOR_KEY` (the key matching whichever
+     address was granted `REWARD_DISTRIBUTOR_ROLE` at deploy time - only
+     needs enough BNB for gas, never holds player funds), `JWT_SECRET`
+     (any long random string), `JWT_EXPIRES_IN=7d`.
    - Generate a public domain (Settings -> Networking).
 4. Add a service for the frontend:
    - Root directory: `frontend`

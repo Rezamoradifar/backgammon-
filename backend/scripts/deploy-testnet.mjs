@@ -9,6 +9,10 @@
 //   OWNER_FEE_WALLET       - defaults to the deployer address
 //   PLATFORM_FEE_WALLET    - defaults to the deployer address (admin-changeable later via setPlatformFeeWallet)
 //   MARKETING_FEE_WALLET   - defaults to the deployer address
+//   REWARD_DISTRIBUTOR_ADDRESS - wallet the backend's weekly reward job signs
+//                                with (its key goes in the backend's own
+//                                WEEKLY_REWARD_DISTRIBUTOR_KEY); defaults to
+//                                the deployer
 
 import { createWalletClient, createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -55,6 +59,7 @@ const arbiter = account.address;
 const ownerFeeWallet = process.env.OWNER_FEE_WALLET || admin;
 const platformFeeWallet = process.env.PLATFORM_FEE_WALLET || admin;
 const marketingFeeWallet = process.env.MARKETING_FEE_WALLET || admin;
+const rewardDistributorAddress = process.env.REWARD_DISTRIBUTOR_ADDRESS || admin;
 
 console.log(`Deploying from ${admin} on chain ${chain.id} (${RPC_URL})`);
 console.log(`Fee wallets - owner: ${ownerFeeWallet}, platform: ${platformFeeWallet}, marketing: ${marketingFeeWallet}`);
@@ -90,6 +95,20 @@ const grantHash = await walletClient.writeContract({
 await publicClient.waitForTransactionReceipt({ hash: grantHash });
 console.log("Granted GAME_MANAGER_ROLE to GameManager");
 
+const rewardRoleHash = await publicClient.readContract({
+  address: gameManager.address,
+  abi: gameManagerArtifact.abi,
+  functionName: "REWARD_DISTRIBUTOR_ROLE",
+});
+const rewardGrantHash = await walletClient.writeContract({
+  address: gameManager.address,
+  abi: gameManagerArtifact.abi,
+  functionName: "grantRole",
+  args: [rewardRoleHash, rewardDistributorAddress],
+});
+await publicClient.waitForTransactionReceipt({ hash: rewardGrantHash });
+console.log(`Granted REWARD_DISTRIBUTOR_ROLE to ${rewardDistributorAddress}`);
+
 const output = {
   chainId: chain.id,
   playerRegistryAddress: playerRegistry.address,
@@ -99,6 +118,7 @@ const output = {
   ownerFeeWallet,
   platformFeeWallet,
   marketingFeeWallet,
+  rewardDistributorAddress,
   deployedAt: new Date().toISOString(),
 };
 const outputPath = join(__dirname, "deployed-addresses.testnet.json");

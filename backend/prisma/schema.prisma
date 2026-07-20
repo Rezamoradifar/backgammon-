@@ -58,6 +58,7 @@ model Wallet {
   referralsMade   Referral[]       @relation("Referrer")
   referralOfSelf  Referral?        @relation("Referee")
   securityEvents  SecurityEvent[]
+  weeklyRewards   WeeklyRewardDistribution[]
 
   @@index([userId])
   @@map("wallets")
@@ -93,6 +94,9 @@ model Game {
   chainId          Int
   state            GameState @default(WAITING_FOR_PLAYER)
   firstToMoveColor PlayerColor?
+  /// Wei amount from the on-chain GameCreated event's `stake` arg (0 for a
+  /// free/friendly match). Drives the weekly top-wagerer reward ranking.
+  stake            BigInt    @default(0)
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -240,10 +244,11 @@ model LeaderboardEntry {
 // Referrals
 // ---------------------------------------------------------------------
 
-/// Informational only in this version - no commission, no payout (this
-/// platform has no monetary features at all). Exists so a future,
-/// separately-licensed module could attach a commission scheme without
-/// this table's shape changing.
+/// Records that a referee claimed a referrer off-chain (e.g. via a shared
+/// link) - the actual commission-earning relationship lives on-chain in
+/// PlayerRegistry.referrerOf, set by the referee's own `setReferrer` call;
+/// this table exists for fast off-chain lookups (referral page stats), not
+/// as the source of truth for who gets paid.
 model Referral {
   id String @id @default(uuid())
 
@@ -320,4 +325,34 @@ model SecurityEvent {
   @@index([walletId])
   @@index([type])
   @@map("security_events")
+}
+
+// ---------------------------------------------------------------------
+// Weekly top-wagerer rewards
+// ---------------------------------------------------------------------
+
+/// One row per (weekId, wallet) payout made by the weekly reward job -
+/// both the audit record and the idempotency guard (the job checks this
+/// table for an existing row before ever calling distributeWeeklyRewards
+/// again for a given weekId, so a retried/duplicate cron run can't pay a
+/// week out twice). weekId is an opaque, job-chosen identifier (ISO week,
+/// e.g. "2026-W03") echoed back in GameManager's WeeklyRewardDistributed
+/// event for on-chain/off-chain cross-referencing.
+model WeeklyRewardDistribution {
+  id     String @id @default(uuid())
+  weekId String
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
+
+  rank           Int    // 1 = top wagerer that week
+  wageredVolume  BigInt // wei, the ranking metric this payout was based on
+  amount         BigInt // wei credited via distributeWeeklyRewards
+  txHash         String
+
+  createdAt DateTime @default(now())
+
+  @@unique([weekId, walletId])
+  @@index([weekId])
+  @@map("weekly_reward_distributions")
 }

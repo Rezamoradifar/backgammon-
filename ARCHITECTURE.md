@@ -185,16 +185,21 @@ inconvenience becomes an economic harm once money is involved.
 
 | Party | Trusted for | Not trusted for |
 |---|---|---|
-| Randomness provider | Providing the random word used for GameManager's own bookkeeping to stay correct | Anything else - a compromised/predictable provider only affects who moves first, never funds (there are none) or match outcomes directly |
-| `ARBITER_ROLE` holder | Manually resolving disputed match outcomes | Anything else - cannot touch funds (none exist), cannot alter a non-disputed game, cannot bypass `onlyPlayer`/state checks |
-| `DEFAULT_ADMIN_ROLE` holder | Pausing the contract, swapping the randomness provider, cancelling stuck pre-start games | Cannot declare a winner, cannot touch an ACTIVE or COMPLETED game's outcome, cannot withdraw anything (there is nothing to withdraw - no payable functions, no token balance the contract ever holds) |
-| Backend | Matchmaking, relaying moves between clients, indexing on-chain events into the DB for history/leaderboards | Never holds a private key on a user's behalf; never signs a transaction for a user; a compromised backend can disrupt matchmaking/UX but cannot forge an on-chain result, since `submitResult`/`confirmResult` must be signed by the actual seated players' wallets |
+| Randomness provider | Providing the random word used for GameManager's own bookkeeping to stay correct | Anything else - a compromised/predictable provider only affects who moves first, never funds or match outcomes directly |
+| `ARBITER_ROLE` holder | Manually resolving disputed match outcomes | Anything else - cannot touch a non-disputed game's funds or outcome, cannot bypass `onlyPlayer`/state checks. Now that matches can be staked, this is a genuine trusted third party over real money for a disputed match - see SECURITY.md's known-limitations section |
+| `DEFAULT_ADMIN_ROLE` holder | Pausing the contract, swapping the randomness provider, cancelling stuck pre-start games, redirecting *where future fees go* (`setOwnerFeeWallet`/`setPlatformFeeWallet`/`setMarketingFeeWallet`) | Cannot declare a winner, cannot touch an ACTIVE or COMPLETED game's outcome, cannot touch any balance already credited to `pendingWithdrawals` - there is no sweep function anywhere in the contract |
+| `REWARD_DISTRIBUTOR_ROLE` holder (the backend's weekly job wallet) | Moving part of `platformFeeWallet`'s own already-credited balance to that week's top-3-wagerer winners via `distributeWeeklyRewards` | Crediting itself or anyone from thin air (the function can never move more than `platformFeeWallet` actually holds), touching any other account's balance (players' winnings, `ownerFeeWallet`, `marketingFeeWallet`) |
+| Backend | Matchmaking, relaying moves between clients, indexing on-chain events into the DB for history/leaderboards, running the weekly reward job | Never holds a private key on a user's behalf; never signs a transaction for a user; a compromised backend can disrupt matchmaking/UX or (via the reward-distributor key specifically) misdirect part of the weekly reward pool to the wrong addresses, but cannot forge an on-chain match result or touch a player's own escrowed stake/winnings, since `submitResult`/`confirmResult`/`withdraw` must be signed by the actual seated player's own wallet |
 | Each player's client | Running the shared deterministic rules engine honestly during their own turn | The opponent's client does not trust the other's engine output blindly - both independently validate legality; the on-chain `submitResult`/`confirmResult`/`disputeResult` flow is the actual arbitration mechanism when clients disagree |
 
-No contract in this version is upgradeable (no proxy pattern) and no
-contract holds player funds, so there is no hidden owner withdrawal path to
-audit for - the "no hidden owner withdrawal" requirement is satisfied
-structurally, not by a promise.
+No contract in this version is upgradeable (no proxy pattern). Every BNB
+movement out of `GameManager` is a pull-payment through
+`pendingWithdrawals`/`withdraw()`, credited only by specific, auditable
+gameplay events (a settled wager, a cancellation refund) or, for
+`platformFeeWallet` specifically, the weekly reward job moving its own
+balance to that week's winners - there is no sweep function, admin-gated or
+otherwise, anywhere in the contract. See SECURITY.md's "No hidden owner
+withdrawal" for the fuller version of this.
 
 ## Future regulated modules (not implemented, not activated)
 
@@ -240,8 +245,9 @@ onchain-backgammon/
 │       ├── engine/         ported rules engine + server-side dice CSPRNG
 │       ├── ws/             matchmaking queue + live gameplay relay (move validation, anti-cheat)
 │       ├── indexer/        GameManager event watcher -> Postgres
+│       ├── jobs/           weekly top-wagerer reward distribution job
 │       └── routes/         auth, game history, leaderboard, referral REST endpoints
-└── frontend/              Next.js client (not started)
+└── frontend/              Next.js client - wagmi/viem/RainbowKit
 ```
 
 ## Why Hardhat 3 instead of only Foundry for this stage

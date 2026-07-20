@@ -16,7 +16,7 @@ deterministic rules engine. See `ARCHITECTURE.md` for the full design
 
 | Layer | Status |
 |---|---|
-| Smart contracts (`GameManager`, `PlayerRegistry`, randomness abstraction, wagering/fee/referral logic) | **Done.** Compiled and tested - 51 tests passing, including fuzz tests and dedicated reentrancy/DoS-safety tests for the wagering payout path. |
+| Smart contracts (`GameManager`, `PlayerRegistry`, randomness abstraction, wagering/fee/referral logic) | **Done.** Compiled and tested - 58 tests passing, including fuzz tests, dedicated reentrancy/DoS-safety tests for the wagering payout path, and coverage of the weekly top-wagerer reward distribution. |
 | Backend (Node/TS, Prisma/Postgres, WebSocket matchmaking + move relay, contract indexer) | **Done.** Auth, matchmaking, real-time gameplay relay, and the contract event indexer all verified end-to-end - see `backend/README.md`. |
 | Frontend (Next.js, wagmi/viem/RainbowKit) | **Done.** Landing, lobby (stake amount -> matchmaking -> on-chain game -> live room), gameplay board, leaderboard, history, referral (on-chain), settings (withdraw), and profile pages - `tsc`, `eslint`, and `next build` all clean, verified in a real browser. See `frontend/README.md`. |
 | Docker / deployment configuration | **Done.** Backend ships a `Dockerfile`; frontend deploys as a stock Next.js app. See `DEPLOYMENT.md`. |

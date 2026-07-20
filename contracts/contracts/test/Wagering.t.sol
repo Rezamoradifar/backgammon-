@@ -327,4 +327,138 @@ contract WageringTest is Test {
 
         assertEq(totalCredited, stake * 2);
     }
+
+    // -------------------------------------------------------------------
+    // Weekly top-wagerer reward distribution
+    // -------------------------------------------------------------------
+
+    function _grantRewardDistributor(address distributor) internal {
+        bytes32 role = gameManager.REWARD_DISTRIBUTOR_ROLE();
+        vm.prank(admin);
+        gameManager.grantRole(role, distributor);
+    }
+
+    function _fundPlatformFeeWallet(uint256 amount) internal returns (uint256 credited) {
+        // A stake of `amount * BPS / PLATFORM_FEE_BPS` credits exactly
+        // `amount` to platformFeeWallet from a single player's cut once that
+        // game is settled - the other player's cut just adds extra headroom.
+        uint256 stake = (amount * BPS) / 500; // 500 = PLATFORM_FEE_BPS, one side's cut
+        vm.deal(alice, stake + 1 ether);
+        vm.deal(bob, stake + 1 ether);
+        uint256 gameId = _createActiveGame(stake);
+        _settle(gameId, alice);
+        credited = gameManager.pendingWithdrawals(platformFeeWallet);
+    }
+
+    function test_DistributeWeeklyRewards_CreditsWinnersAndDebitsPlatform() public {
+        uint256 funded = _fundPlatformFeeWallet(300 ether);
+        address distributor = makeAddr("distributor");
+        _grantRewardDistributor(distributor);
+
+        address[] memory winners = new address[](3);
+        winners[0] = makeAddr("weekly1");
+        winners[1] = makeAddr("weekly2");
+        winners[2] = makeAddr("weekly3");
+        uint256[] memory amounts = new uint256[](3);
+        amounts[0] = 50 ether;
+        amounts[1] = 30 ether;
+        amounts[2] = 20 ether;
+
+        vm.prank(distributor);
+        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+
+        assertEq(gameManager.pendingWithdrawals(winners[0]), 50 ether);
+        assertEq(gameManager.pendingWithdrawals(winners[1]), 30 ether);
+        assertEq(gameManager.pendingWithdrawals(winners[2]), 20 ether);
+        assertEq(gameManager.pendingWithdrawals(platformFeeWallet), funded - 100 ether);
+    }
+
+    function test_RevertWhen_DistributingWithoutRole() public {
+        _fundPlatformFeeWallet(300 ether);
+        address[] memory winners = new address[](1);
+        winners[0] = makeAddr("weekly1");
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 10 ether;
+
+        vm.prank(alice); // never granted REWARD_DISTRIBUTOR_ROLE
+        vm.expectRevert();
+        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+    }
+
+    function test_RevertWhen_DistributingMoreThanPlatformBalance() public {
+        uint256 funded = _fundPlatformFeeWallet(10 ether);
+        address distributor = makeAddr("distributor");
+        _grantRewardDistributor(distributor);
+
+        address[] memory winners = new address[](1);
+        winners[0] = makeAddr("weekly1");
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = funded + 1 ether;
+
+        vm.prank(distributor);
+        vm.expectRevert(GameManager.InsufficientPlatformBalance.selector);
+        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+    }
+
+    function test_RevertWhen_DistributingWithMismatchedArrayLengths() public {
+        _fundPlatformFeeWallet(10 ether);
+        address distributor = makeAddr("distributor");
+        _grantRewardDistributor(distributor);
+
+        address[] memory winners = new address[](2);
+        winners[0] = makeAddr("weekly1");
+        winners[1] = makeAddr("weekly2");
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1 ether;
+
+        vm.prank(distributor);
+        vm.expectRevert(GameManager.ArrayLengthMismatch.selector);
+        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+    }
+
+    function test_RevertWhen_DistributingWithEmptyWinnerList() public {
+        address distributor = makeAddr("distributor");
+        _grantRewardDistributor(distributor);
+
+        address[] memory winners = new address[](0);
+        uint256[] memory amounts = new uint256[](0);
+
+        vm.prank(distributor);
+        vm.expectRevert(GameManager.EmptyWinnerList.selector);
+        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+    }
+
+    function test_RevertWhen_DistributingToZeroAddress() public {
+        uint256 funded = _fundPlatformFeeWallet(10 ether);
+        address distributor = makeAddr("distributor");
+        _grantRewardDistributor(distributor);
+
+        address[] memory winners = new address[](1);
+        winners[0] = address(0);
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = funded;
+
+        vm.prank(distributor);
+        vm.expectRevert(GameManager.ZeroAddress.selector);
+        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+    }
+
+    function test_DistributeWeeklyRewards_DoesNotAffectOtherBalances() public {
+        _fundPlatformFeeWallet(100 ether);
+        uint256 ownerBefore = gameManager.pendingWithdrawals(ownerFeeWallet);
+        uint256 marketingBefore = gameManager.pendingWithdrawals(marketingFeeWallet);
+        address distributor = makeAddr("distributor");
+        _grantRewardDistributor(distributor);
+
+        address[] memory winners = new address[](1);
+        winners[0] = makeAddr("weekly1");
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 10 ether;
+
+        vm.prank(distributor);
+        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+
+        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet), ownerBefore);
+        assertEq(gameManager.pendingWithdrawals(marketingFeeWallet), marketingBefore);
+    }
 }

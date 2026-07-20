@@ -63,12 +63,22 @@
   },
   {
     "inputs": [],
+    "name": "ArrayLengthMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "CannotJoinOwnGame",
     "type": "error"
   },
   {
     "inputs": [],
     "name": "ConfirmationWindowNotElapsed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "EmptyWinnerList",
     "type": "error"
   },
   {
@@ -84,6 +94,11 @@
   {
     "inputs": [],
     "name": "GameNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InsufficientPlatformBalance",
     "type": "error"
   },
   {
@@ -592,6 +607,31 @@
     "inputs": [
       {
         "indexed": true,
+        "internalType": "uint256",
+        "name": "weekId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "winner",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "WeeklyRewardDistributed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
         "internalType": "address",
         "name": "account",
         "type": "address"
@@ -750,6 +790,19 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "REWARD_DISTRIBUTOR_ROLE",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -797,6 +850,29 @@
       }
     ],
     "name": "disputeResult",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address[]",
+        "name": "winners",
+        "type": "address[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "amounts",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256",
+        "name": "weekId",
+        "type": "uint256"
+      }
+    ],
+    "name": "distributeWeeklyRewards",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

@@ -7,6 +7,7 @@ import { leaderboardRouter } from "./routes/leaderboard.js";
 import { referralRouter } from "./routes/referral.js";
 import { createWsServer } from "./ws/server.js";
 import { startGameManagerIndexer } from "./indexer/gameManagerIndexer.js";
+import { startWeeklyRewardsScheduler } from "./jobs/weeklyRewards.js";
 
 const app = express();
 app.use(express.json());
@@ -40,6 +41,24 @@ if (RPC_URL && GAME_MANAGER_ADDRESS) {
   }
 } else {
   console.log("RPC_URL / GAME_MANAGER_ADDRESS not set - contract event indexer is not running");
+}
+
+const { WEEKLY_REWARD_DISTRIBUTOR_KEY } = process.env;
+if (RPC_URL && GAME_MANAGER_ADDRESS && WEEKLY_REWARD_DISTRIBUTOR_KEY) {
+  startWeeklyRewardsScheduler({
+    rpcUrl: RPC_URL,
+    gameManagerAddress: GAME_MANAGER_ADDRESS as `0x${string}`,
+    distributorPrivateKey: WEEKLY_REWARD_DISTRIBUTOR_KEY as `0x${string}`,
+    chain: {
+      id: Number(CHAIN_ID ?? 97),
+      name: "configured-chain",
+      nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+      rpcUrls: { default: { http: [RPC_URL] } },
+    },
+  });
+  console.log("Weekly top-wagerer reward job is running (hourly due-check)");
+} else {
+  console.log("WEEKLY_REWARD_DISTRIBUTOR_KEY not set - weekly reward job is not running");
 }
 
 const port = Number(process.env.PORT ?? 4000);
