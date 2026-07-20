@@ -1,0 +1,19 @@
+node_modules/
+.env
+.env.local
+
+# contracts
+contracts/cache/
+contracts/artifacts/
+contracts/out/
+contracts/typechain-types/
+
+# backend
+backend/dist/
+backend/node_modules/
+
+# frontend
+frontend/.next/
+frontend/node_modules/
+
+.DS_Store

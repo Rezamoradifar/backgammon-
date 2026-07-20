@@ -1,0 +1,322 @@
+// On-chain Backgammon backend schema.
+//
+// The chain (GameManager/PlayerRegistry) is the source of truth for a
+// match's lifecycle and final result. This database exists to serve what
+// the chain deliberately doesn't store: full move-by-move history, dice
+// rolls, matchmaking state, leaderboards, and anti-cheat telemetry. See
+// ARCHITECTURE.md for the full on-chain/off-chain split.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------
+
+model User {
+  id          String   @id @default(uuid())
+  displayName String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  wallets Wallet[]
+
+  @@map("users")
+}
+
+/// A wallet address linked to a User. Modeled separately from User (rather
+/// than address-as-primary-key) so a single account can later link more
+/// than one address without a schema change.
+model Wallet {
+  id      String @id @default(uuid())
+  address String @unique // checksummed EVM address
+  chainId Int
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One-time nonce for the current SIWE-style login challenge. Rotated on
+  /// every issued challenge and every successful verification so a signed
+  /// message can never be replayed.
+  authNonce          String?
+  authNonceExpiresAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  gamesAsPlayer   GamePlayer[]
+  movesMade       Move[]
+  diceRolls       DiceRoll[]
+  wonResults      GameResult[]     @relation("WinnerWallet")
+  lostResults     GameResult[]     @relation("LoserWallet")
+  leaderboardRow  LeaderboardEntry?
+  referralsMade   Referral[]       @relation("Referrer")
+  referralOfSelf  Referral?        @relation("Referee")
+  securityEvents  SecurityEvent[]
+
+  @@index([userId])
+  @@map("wallets")
+}
+
+// ---------------------------------------------------------------------
+// Games
+// ---------------------------------------------------------------------
+
+enum GameState {
+  WAITING_FOR_PLAYER
+  CREATED
+  ACTIVE
+  AWAITING_RESULT
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PlayerColor {
+  WHITE
+  BLACK
+}
+
+/// Mirrors GameManager's on-chain lifecycle for fast reads; ContractEvent
+/// is the append-only audit log this is derived from, not the other way
+/// around - if they ever disagree, ContractEvent (and ultimately the chain
+/// itself) wins.
+model Game {
+  id               String    @id @default(uuid())
+  onChainGameId    BigInt    @unique
+  contractAddress  String
+  chainId          Int
+  state            GameState @default(WAITING_FOR_PLAYER)
+  firstToMoveColor PlayerColor?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  players       GamePlayer[]
+  moves         Move[]
+  diceRolls     DiceRoll[]
+  result        GameResult?
+  securityEvents SecurityEvent[]
+
+  @@index([state])
+  @@map("games")
+}
+
+/// Seats a Wallet on a Game. Kept as its own model (rather than two FK
+/// columns on Game) so per-seat metadata - color, readiness, client info -
+/// has somewhere to live without overloading Game itself.
+model GamePlayer {
+  id     String      @id @default(uuid())
+  gameId String
+  game   Game        @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
+
+  color    PlayerColor
+  joinedAt DateTime    @default(now())
+  isReady  Boolean     @default(false)
+
+  moves     Move[]
+  diceRolls DiceRoll[]
+
+  @@unique([gameId, walletId])
+  @@unique([gameId, color])
+  @@index([walletId])
+  @@map("game_players")
+}
+
+/// Off-chain, full move-by-move history - this is exactly what the chain
+/// deliberately does not store (see ARCHITECTURE.md). Populated by the
+/// backend as it relays and validates moves in real time.
+model Move {
+  id         String @id @default(uuid())
+  gameId     String
+  game       Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  playerId String
+  player   GamePlayer @relation(fields: [playerId], references: [id])
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
+
+  turnNumber     Int
+  sequenceInTurn Int
+  dieValue       Int
+  fromPoint      Int? // null = entering from the bar
+  toPoint        Int? // null = bearing off
+  wasHit         Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([gameId, turnNumber, sequenceInTurn])
+  @@index([gameId])
+  @@map("moves")
+}
+
+/// The backend rolls dice server-side and broadcasts the result to both
+/// clients - the neutral-referee pattern, rather than trusting either
+/// player's own client-side RNG. See backend README for why.
+model DiceRoll {
+  id     String @id @default(uuid())
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  playerId String
+  player   GamePlayer @relation(fields: [playerId], references: [id])
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id])
+
+  turnNumber Int
+  values     Int[] // [a, b], or four equal values for a double
+
+  createdAt DateTime @default(now())
+
+  @@unique([gameId, turnNumber])
+  @@index([gameId])
+  @@map("dice_rolls")
+}
+
+enum ResultSource {
+  CONFIRMED
+  TIMEOUT
+  ARBITER
+}
+
+/// 1:1 with a completed Game - the cached, queryable mirror of the on-chain
+/// final result (GameManager's ResultConfirmed / ResultFinalizedByTimeout /
+/// DisputeResolved events).
+model GameResult {
+  id     String @id @default(uuid())
+  gameId String @unique
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  winnerId String
+  winner   Wallet @relation("WinnerWallet", fields: [winnerId], references: [id])
+
+  loserId String
+  loser   Wallet @relation("LoserWallet", fields: [loserId], references: [id])
+
+  source           ResultSource
+  resultHashOnChain String?
+  txHash           String
+  createdAt        DateTime @default(now())
+
+  @@map("game_results")
+}
+
+// ---------------------------------------------------------------------
+// Leaderboard
+// ---------------------------------------------------------------------
+
+/// Denormalized, incrementally-updated cache - avoids an expensive
+/// aggregate query across GameResult on every leaderboard page load.
+/// Recomputed incrementally whenever a GameResult is written.
+model LeaderboardEntry {
+  walletId      String   @id
+  wallet        Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  gamesPlayed   Int      @default(0)
+  currentStreak Int      @default(0)
+  bestStreak    Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@index([wins])
+  @@index([currentStreak])
+  @@map("leaderboard_entries")
+}
+
+// ---------------------------------------------------------------------
+// Referrals
+// ---------------------------------------------------------------------
+
+/// Informational only in this version - no commission, no payout (this
+/// platform has no monetary features at all). Exists so a future,
+/// separately-licensed module could attach a commission scheme without
+/// this table's shape changing.
+model Referral {
+  id String @id @default(uuid())
+
+  referrerWalletId String
+  referrer         Wallet @relation("Referrer", fields: [referrerWalletId], references: [id])
+
+  refereeWalletId String @unique
+  referee         Wallet @relation("Referee", fields: [refereeWalletId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([referrerWalletId])
+  @@map("referrals")
+}
+
+// ---------------------------------------------------------------------
+// Chain indexing
+// ---------------------------------------------------------------------
+
+/// Append-only raw log of every indexed GameManager/PlayerRegistry event -
+/// the audit trail Game/GameResult/LeaderboardEntry are derived from.
+model ContractEvent {
+  id              String  @id @default(uuid())
+  contractAddress String
+  chainId         Int
+  eventName       String
+  blockNumber     BigInt
+  transactionHash String
+  logIndex        Int
+  args            Json
+  processedAt     DateTime @default(now())
+
+  gameId String?
+  game   Game?   @relation(fields: [gameId], references: [id])
+
+  @@unique([transactionHash, logIndex])
+  @@index([contractAddress, eventName])
+  @@index([blockNumber])
+  @@map("contract_events")
+}
+
+// ---------------------------------------------------------------------
+// Anti-cheat / security telemetry
+// ---------------------------------------------------------------------
+
+enum SecurityEventType {
+  INVALID_MOVE_ATTEMPT
+  SIGNATURE_MISMATCH
+  RATE_LIMIT_EXCEEDED
+  SUSPICIOUS_MOVE_TIMING
+  UNAUTHORIZED_ACTION_ATTEMPT
+}
+
+enum SecurityEventSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model SecurityEvent {
+  id       String                 @id @default(uuid())
+  type     SecurityEventType
+  severity SecurityEventSeverity  @default(LOW)
+
+  walletId String?
+  wallet   Wallet? @relation(fields: [walletId], references: [id])
+
+  gameId String?
+  game   Game?   @relation(fields: [gameId], references: [id])
+
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([walletId])
+  @@index([type])
+  @@map("security_events")
+}
