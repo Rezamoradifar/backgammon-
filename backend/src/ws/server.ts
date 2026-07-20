@@ -9,6 +9,7 @@ import { gameRoomManager } from "./gameRoom.js";
 const clientMessageSchema = z.union([
   z.object({ type: z.literal("queue") }),
   z.object({ type: z.literal("cancelQueue") }),
+  z.object({ type: z.literal("gameCreated"), onChainGameId: z.string() }),
   z.object({ type: z.literal("joinRoom"), gameId: z.string() }),
   z.object({
     type: z.literal("roll"),
@@ -69,9 +70,18 @@ export function createWsServer(server: import("node:http").Server): WebSocketSer
         case "cancelQueue":
           matchmaker.dequeue(walletId);
           break;
+        case "gameCreated": {
+          const opponent = matchmaker.getPairedOpponent(walletId);
+          if (opponent && opponent.socket.readyState === opponent.socket.OPEN) {
+            opponent.socket.send(JSON.stringify({ type: "gameCreated", onChainGameId: message.onChainGameId }));
+          }
+          matchmaker.clearPair(walletId);
+          break;
+        }
         case "joinRoom": {
           const color = gameRoomManager.attachSocket(message.gameId, walletId, socket);
-          socket.send(JSON.stringify({ type: "roomJoined", gameId: message.gameId, color }));
+          const state = gameRoomManager.getRoomState(message.gameId);
+          socket.send(JSON.stringify({ type: "roomJoined", gameId: message.gameId, color, state: state ?? null }));
           break;
         }
         case "roll":

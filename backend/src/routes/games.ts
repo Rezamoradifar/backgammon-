@@ -30,6 +30,36 @@ gamesRouter.get("/history/:address", async (req, res) => {
   );
 });
 
+/**
+ * Resolves an on-chain gameId to this backend's internal Game row - the
+ * frontend knows the on-chain id (it's what createGame()'s transaction
+ * ultimately produces) but the WebSocket gameplay room is keyed by the
+ * internal id, so the client needs this lookup before it can `joinRoom`.
+ * 404s (not an empty 200) until the indexer has actually seen GameCreated -
+ * the frontend polls this while waiting.
+ */
+gamesRouter.get("/lookup/:onChainGameId", async (req, res) => {
+  let onChainGameId: bigint;
+  try {
+    onChainGameId = BigInt(req.params.onChainGameId);
+  } catch {
+    res.status(400).json({ error: "Invalid onChainGameId" });
+    return;
+  }
+
+  const game = await prisma.game.findUnique({ where: { onChainGameId }, include: { players: { include: { wallet: true } } } });
+  if (!game) {
+    res.status(404).json({ error: "Game not indexed yet" });
+    return;
+  }
+
+  res.json({
+    id: game.id,
+    state: game.state,
+    players: game.players.map((p) => ({ address: p.wallet.address, color: p.color })),
+  });
+});
+
 /** Full move-by-move transcript for a single game - the detail the chain deliberately doesn't store. */
 gamesRouter.get("/:onChainGameId/moves", async (req, res) => {
   const onChainGameId = BigInt(req.params.onChainGameId);

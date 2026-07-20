@@ -19,6 +19,8 @@ interface QueuedPlayer {
  */
 export class Matchmaker {
   private queue: QueuedPlayer[] = [];
+  /** walletId -> matched opponent, so a "gameCreated" message from one side can be relayed to the other. */
+  private pairedOpponent = new Map<string, QueuedPlayer>();
 
   enqueue(player: QueuedPlayer): void {
     this.dequeue(player.walletId); // no duplicate entries for the same wallet
@@ -34,6 +36,16 @@ export class Matchmaker {
     return this.queue.length;
   }
 
+  getPairedOpponent(walletId: string): QueuedPlayer | undefined {
+    return this.pairedOpponent.get(walletId);
+  }
+
+  clearPair(walletId: string): void {
+    const opponent = this.pairedOpponent.get(walletId);
+    if (opponent) this.pairedOpponent.delete(opponent.walletId);
+    this.pairedOpponent.delete(walletId);
+  }
+
   private tryMatch(): void {
     while (this.queue.length >= 2) {
       const [a, b] = this.queue.splice(0, 2);
@@ -46,11 +58,19 @@ export class Matchmaker {
         continue;
       }
 
-      const payload = (opponent: QueuedPlayer) =>
-        JSON.stringify({ type: "matched", opponentAddress: opponent.address, opponentWalletId: opponent.walletId });
+      this.pairedOpponent.set(a.walletId, b);
+      this.pairedOpponent.set(b.walletId, a);
 
-      a.socket.send(payload(b));
-      b.socket.send(payload(a));
+      // Both clients independently derive the same "who creates the on-chain
+      // game" answer from the same comparison, with no extra round trip.
+      const aIsCreator = a.address.toLowerCase() < b.address.toLowerCase();
+
+      a.socket.send(
+        JSON.stringify({ type: "matched", opponentAddress: b.address, opponentWalletId: b.walletId, amICreator: aIsCreator }),
+      );
+      b.socket.send(
+        JSON.stringify({ type: "matched", opponentAddress: a.address, opponentWalletId: a.walletId, amICreator: !aIsCreator }),
+      );
     }
   }
 }
