@@ -99,11 +99,12 @@ model Game {
   startedAt   DateTime?
   completedAt DateTime?
 
-  players       GamePlayer[]
-  moves         Move[]
-  diceRolls     DiceRoll[]
-  result        GameResult?
+  players        GamePlayer[]
+  moves          Move[]
+  diceRolls      DiceRoll[]
+  result         GameResult?
   securityEvents SecurityEvent[]
+  contractEvents ContractEvent[]
 
   @@index([state])
   @@map("games")

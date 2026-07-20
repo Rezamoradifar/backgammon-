@@ -13,8 +13,8 @@ limitations.
 | Layer | Status |
 |---|---|
 | Smart contracts (`GameManager`, `PlayerRegistry`, randomness abstraction) | **Done.** Compiled and tested - 34 tests passing, including fuzz tests. |
-| Backend (Node/TS, Prisma/Postgres, WebSocket matchmaking + move relay) | In progress. |
-| Frontend (Next.js, wagmi/viem) | In progress. |
+| Backend (Node/TS, Prisma/Postgres, WebSocket matchmaking + move relay, contract indexer) | **Done.** Auth, matchmaking, real-time gameplay relay, and the contract event indexer all verified end-to-end - see `backend/README.md`. |
+| Frontend (Next.js, wagmi/viem) | Not started. |
 | Docker / deployment configuration | Not started. |
 | BNB Chain Testnet deployment | Not done - requires a funded deployer wallet, which only the project owner can supply (see "Deploying" below). |
 
@@ -45,6 +45,20 @@ If you have Foundry installed, the same contracts and tests also run with:
 cd contracts
 forge test
 ```
+
+## Backend: setup
+
+```bash
+cd backend
+npm install
+cp .env.example .env   # fill in DATABASE_URL, JWT_SECRET
+npx prisma migrate dev
+npm test
+```
+
+See `backend/README.md` for what's implemented, why the backend (not either
+client) rolls the dice, and how to run the full suite against a real local
+blockchain (not mocked) for the contract-indexer test.
 
 ## Deploying
 

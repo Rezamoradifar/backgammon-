@@ -225,8 +225,15 @@ onchain-backgammon/
 │   │   └── test/*.t.sol  (forge-std style unit + fuzz tests)
 │   ├── hardhat.config.ts
 │   └── foundry.toml
-├── backend/               Node/TS API + WebSocket + Prisma (in progress)
-└── frontend/              Next.js client (in progress)
+├── backend/               Node/TS API + WebSocket + Prisma - see backend/README.md
+│   ├── prisma/schema.prisma
+│   └── src/
+│       ├── auth/          wallet-signature (SIWE-style) nonce + verify + JWT sessions
+│       ├── engine/         ported rules engine + server-side dice CSPRNG
+│       ├── ws/             matchmaking queue + live gameplay relay (move validation, anti-cheat)
+│       ├── indexer/        GameManager event watcher -> Postgres
+│       └── routes/         auth, game history, leaderboard, referral REST endpoints
+└── frontend/              Next.js client (not started)
 ```
 
 ## Why Hardhat 3 instead of only Foundry for this stage
