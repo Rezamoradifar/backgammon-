@@ -13,6 +13,10 @@ RUN npx prisma generate
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
+# tsc only emits compiled .ts->.js output - it has no idea these JSON ABI
+# files exist since nothing statically `import`s them (they're loaded at
+# runtime via readFileSync), so they need to be copied into dist by hand.
+RUN cp -r src/indexer/abi dist/indexer/abi
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
