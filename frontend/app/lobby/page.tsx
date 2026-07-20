@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
-import { decodeEventLog } from "viem";
+import { decodeEventLog, parseEther, formatEther } from "viem";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 import { useAuth } from "@/lib/auth";
@@ -22,9 +22,11 @@ export default function LobbyPage() {
   const { writeContractAsync } = useWriteContract();
   const router = useRouter();
 
+  const [stakeInput, setStakeInput] = React.useState("0");
   const [status, setStatus] = React.useState<Status>("idle");
   const [opponentAddress, setOpponentAddress] = React.useState<string | null>(null);
   const [amICreator, setAmICreator] = React.useState(false);
+  const [matchedStake, setMatchedStake] = React.useState<bigint>(BigInt(0));
   const [onChainGameId, setOnChainGameId] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
 
@@ -33,6 +35,7 @@ export default function LobbyPage() {
       if (message.type === "matched") {
         setOpponentAddress(message.opponentAddress);
         setAmICreator(message.amICreator);
+        setMatchedStake(BigInt(message.stake));
         setStatus("matched");
       }
       if (message.type === "gameCreated") {
@@ -41,7 +44,8 @@ export default function LobbyPage() {
     });
   }, [onMessage]);
 
-  // Creator: as soon as we're matched, create the on-chain game and tell the opponent its id.
+  // Creator: as soon as we're matched, create the on-chain game (staking the
+  // amount both sides queued for) and tell the opponent its id.
   React.useEffect(() => {
     if (status !== "matched" || !amICreator || !GAME_MANAGER_ADDRESS || !publicClient) return;
 
@@ -52,6 +56,7 @@ export default function LobbyPage() {
           address: GAME_MANAGER_ADDRESS,
           abi: gameManagerAbi,
           functionName: "createGame",
+          value: matchedStake,
         });
         const receipt = await publicClient.waitForTransactionReceipt({ hash });
         const createdLog = receipt.logs
@@ -74,9 +79,11 @@ export default function LobbyPage() {
         setStatus("error");
       }
     })();
-  }, [status, amICreator, publicClient, writeContractAsync, send, router]);
+  }, [status, amICreator, matchedStake, publicClient, writeContractAsync, send, router]);
 
-  // Joiner: once we know the on-chain gameId the creator produced, join it.
+  // Joiner: once we know the on-chain gameId the creator produced, join it,
+  // sending exactly the stake both sides queued for (must match createGame's
+  // msg.value exactly or the transaction reverts).
   React.useEffect(() => {
     if (status !== "matched" || amICreator || !onChainGameId || !GAME_MANAGER_ADDRESS || !publicClient) return;
 
@@ -88,6 +95,7 @@ export default function LobbyPage() {
           abi: gameManagerAbi,
           functionName: "joinGame",
           args: [BigInt(onChainGameId)],
+          value: matchedStake,
         });
         await publicClient.waitForTransactionReceipt({ hash });
         router.push(`/game/${onChainGameId}`);
@@ -96,10 +104,18 @@ export default function LobbyPage() {
         setStatus("error");
       }
     })();
-  }, [status, amICreator, onChainGameId, publicClient, writeContractAsync, router]);
+  }, [status, amICreator, onChainGameId, matchedStake, publicClient, writeContractAsync, router]);
 
   function findMatch() {
-    send({ type: "queue" });
+    let stakeWei: bigint;
+    try {
+      stakeWei = parseEther(stakeInput || "0");
+    } catch {
+      setErrorMessage("Enter a valid BNB amount (or 0 for a free match)");
+      setStatus("error");
+      return;
+    }
+    send({ type: "queue", stake: stakeWei.toString() });
     setStatus("queued");
   }
 
@@ -125,16 +141,33 @@ export default function LobbyPage() {
       )}
 
       {isConnected && isAuthenticated && status === "idle" && (
-        <button onClick={findMatch} className="rounded-full bg-indigo-500 px-8 py-3 font-medium text-white hover:bg-indigo-400">
-          Find a match
-        </button>
+        <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-1">
+            <label htmlFor="stake" className="text-sm text-slate-400">
+              Stake per player (BNB) - 0 for a free match
+            </label>
+            <input
+              id="stake"
+              value={stakeInput}
+              onChange={(e) => setStakeInput(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+              className="w-40 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-center text-sm"
+            />
+            <p className="text-xs text-slate-500">You&apos;ll only be matched with someone queuing the same stake.</p>
+          </div>
+          <button onClick={findMatch} className="rounded-full bg-indigo-500 px-8 py-3 font-medium text-white hover:bg-indigo-400">
+            Find a match
+          </button>
+        </div>
       )}
 
       {status === "queued" && <p className="text-slate-300">Waiting for an opponent...</p>}
 
       {status === "matched" && opponentAddress && (
         <p className="text-slate-300">
-          Matched with <span className="font-mono">{shortenAddress(opponentAddress)}</span> - preparing the match...
+          Matched with <span className="font-mono">{shortenAddress(opponentAddress)}</span>
+          {matchedStake > BigInt(0) && <> for {formatEther(matchedStake)} BNB each</>} - preparing the match...
         </p>
       )}
 

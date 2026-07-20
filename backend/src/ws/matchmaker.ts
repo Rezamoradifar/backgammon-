@@ -4,6 +4,8 @@ interface QueuedPlayer {
   walletId: string;
   address: string;
   socket: WebSocket;
+  /** Stake in wei (as a string, since it can exceed Number precision) the player wants to play for - "0" is a free match. */
+  stake: string;
 }
 
 /**
@@ -46,31 +48,65 @@ export class Matchmaker {
     this.pairedOpponent.delete(walletId);
   }
 
+  /**
+   * Pairs players wanting the *same* stake - a player queued for a 0.1 BNB
+   * match never gets matched against one queued for a free game, since
+   * joinGame requires sending exactly the creator's stake.
+   */
   private tryMatch(): void {
-    while (this.queue.length >= 2) {
-      const [a, b] = this.queue.splice(0, 2);
-      if (a.socket.readyState !== a.socket.OPEN) {
-        this.queue.unshift(b);
-        continue;
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (let i = 0; i < this.queue.length; i++) {
+        const a = this.queue[i];
+        if (a.socket.readyState !== a.socket.OPEN) {
+          this.queue.splice(i, 1);
+          progressed = true;
+          break;
+        }
+
+        const jIndex = this.queue.findIndex((p, idx) => idx !== i && p.stake === a.stake);
+        if (jIndex === -1) continue;
+        const b = this.queue[jIndex];
+        if (b.socket.readyState !== b.socket.OPEN) {
+          this.queue.splice(jIndex, 1);
+          progressed = true;
+          break;
+        }
+
+        this.queue.splice(Math.max(i, jIndex), 1);
+        this.queue.splice(Math.min(i, jIndex), 1);
+
+        this.pairedOpponent.set(a.walletId, b);
+        this.pairedOpponent.set(b.walletId, a);
+
+        // Both clients independently derive the same "who creates the
+        // on-chain game" answer from the same comparison, with no extra
+        // round trip.
+        const aIsCreator = a.address.toLowerCase() < b.address.toLowerCase();
+
+        a.socket.send(
+          JSON.stringify({
+            type: "matched",
+            opponentAddress: b.address,
+            opponentWalletId: b.walletId,
+            amICreator: aIsCreator,
+            stake: a.stake,
+          }),
+        );
+        b.socket.send(
+          JSON.stringify({
+            type: "matched",
+            opponentAddress: a.address,
+            opponentWalletId: a.walletId,
+            amICreator: !aIsCreator,
+            stake: b.stake,
+          }),
+        );
+
+        progressed = true;
+        break;
       }
-      if (b.socket.readyState !== b.socket.OPEN) {
-        this.queue.unshift(a);
-        continue;
-      }
-
-      this.pairedOpponent.set(a.walletId, b);
-      this.pairedOpponent.set(b.walletId, a);
-
-      // Both clients independently derive the same "who creates the on-chain
-      // game" answer from the same comparison, with no extra round trip.
-      const aIsCreator = a.address.toLowerCase() < b.address.toLowerCase();
-
-      a.socket.send(
-        JSON.stringify({ type: "matched", opponentAddress: b.address, opponentWalletId: b.walletId, amICreator: aIsCreator }),
-      );
-      b.socket.send(
-        JSON.stringify({ type: "matched", opponentAddress: a.address, opponentWalletId: a.walletId, amICreator: !aIsCreator }),
-      );
     }
   }
 }

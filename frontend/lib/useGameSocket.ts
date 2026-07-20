@@ -6,7 +6,7 @@ import { WS_BASE_URL } from "./api";
 import type { GameState, Move } from "./backgammonTypes";
 
 export type ServerMessage =
-  | { type: "matched"; opponentAddress: string; opponentWalletId: string; amICreator: boolean }
+  | { type: "matched"; opponentAddress: string; opponentWalletId: string; amICreator: boolean; stake: string }
   | { type: "gameCreated"; onChainGameId: string }
   | { type: "roomJoined"; gameId: string; color: "white" | "black" | null; state: GameState | null }
   | { type: "rolled"; turn: "white" | "black"; dice: number[]; turnNumber: number }
@@ -16,7 +16,7 @@ export type ServerMessage =
   | { type: "gameOver"; winner: "white" | "black" };
 
 type ClientMessage =
-  | { type: "queue" }
+  | { type: "queue"; stake: string }
   | { type: "cancelQueue" }
   | { type: "gameCreated"; onChainGameId: string }
   | { type: "joinRoom"; gameId: string }

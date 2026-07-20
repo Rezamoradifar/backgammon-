@@ -7,7 +7,7 @@ import { matchmaker } from "./matchmaker.js";
 import { gameRoomManager } from "./gameRoom.js";
 
 const clientMessageSchema = z.union([
-  z.object({ type: z.literal("queue") }),
+  z.object({ type: z.literal("queue"), stake: z.string().optional() }),
   z.object({ type: z.literal("cancelQueue") }),
   z.object({ type: z.literal("gameCreated"), onChainGameId: z.string() }),
   z.object({ type: z.literal("joinRoom"), gameId: z.string() }),
@@ -65,7 +65,7 @@ export function createWsServer(server: import("node:http").Server): WebSocketSer
 
       switch (message.type) {
         case "queue":
-          matchmaker.enqueue({ walletId, address, socket });
+          matchmaker.enqueue({ walletId, address, socket, stake: message.stake ?? "0" });
           break;
         case "cancelQueue":
           matchmaker.dequeue(walletId);

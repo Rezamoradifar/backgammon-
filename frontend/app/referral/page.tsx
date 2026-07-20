@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useAccount } from "wagmi";
+import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { shortenAddress } from "@/lib/utils";
+import { PLAYER_REGISTRY_ADDRESS } from "@/lib/wagmi";
+import playerRegistryAbi from "@/lib/abi/PlayerRegistry.json";
 
 interface ReferralRow {
   refereeAddress: string;
@@ -16,9 +18,12 @@ interface ReferralRow {
 export default function ReferralPage() {
   const { address, isConnected } = useAccount();
   const { token, isAuthenticated, login, isSigningIn } = useAuth();
+  const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
   const [referrals, setReferrals] = React.useState<ReferralRow[] | null>(null);
   const [claimInput, setClaimInput] = React.useState("");
   const [claimMessage, setClaimMessage] = React.useState<string | null>(null);
+  const [isClaiming, setIsClaiming] = React.useState(false);
 
   React.useEffect(() => {
     if (!token) return;
@@ -26,13 +31,28 @@ export default function ReferralPage() {
   }, [token]);
 
   async function claim() {
-    if (!token) return;
+    if (!token || !PLAYER_REGISTRY_ADDRESS || !publicClient) return;
     setClaimMessage(null);
+    setIsClaiming(true);
     try {
-      await apiFetch("/referral/claim", { method: "POST", token, body: JSON.stringify({ referrerAddress: claimInput }) });
-      setClaimMessage("Referral recorded.");
+      // The on-chain call is the one that actually matters (it's what future
+      // wagers pay commission against) - the backend record is only for this
+      // page's "wallets you referred" list, since the chain has no reverse
+      // index for that.
+      const hash = await writeContractAsync({
+        address: PLAYER_REGISTRY_ADDRESS,
+        abi: playerRegistryAbi,
+        functionName: "setReferrer",
+        args: [claimInput],
+      });
+      await publicClient.waitForTransactionReceipt({ hash });
+      await apiFetch("/referral/claim", { method: "POST", token, body: JSON.stringify({ referrerAddress: claimInput }) })
+        .catch(() => {}); // best-effort - the on-chain call above is the one that actually matters
+      setClaimMessage("Referrer set on-chain - future wagers will pay them a commission.");
     } catch (err) {
-      setClaimMessage(err instanceof Error ? err.message : "Failed to record referral");
+      setClaimMessage(err instanceof Error ? err.message : "Failed to set referrer");
+    } finally {
+      setIsClaiming(false);
     }
   }
 
@@ -49,7 +69,8 @@ export default function ReferralPage() {
     <div className="mx-auto max-w-xl px-4 py-10">
       <h1 className="mb-2 text-2xl font-semibold">Referrals</h1>
       <p className="mb-6 text-sm text-slate-400">
-        Informational only - no commission or payout in this free version. This just records who invited whom.
+        Setting a referrer is on-chain and one-time - once set it can&apos;t be changed. Your referrer (and theirs, up to 3
+        levels up) earns a share of the platform fee on every wager you play, paid automatically when a match settles.
       </p>
 
       <div className="mb-6 rounded-lg border border-white/10 bg-white/5 p-4">
@@ -72,8 +93,12 @@ export default function ReferralPage() {
               placeholder="Referrer wallet address"
               className="flex-1 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm"
             />
-            <button onClick={() => void claim()} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white">
-              Claim
+            <button
+              onClick={() => void claim()}
+              disabled={isClaiming || !claimInput}
+              className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {isClaiming ? "Confirm in wallet..." : "Set as my referrer"}
             </button>
           </div>
           {claimMessage && <p className="mb-4 text-sm text-slate-300">{claimMessage}</p>}
