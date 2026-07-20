@@ -27,12 +27,29 @@ interface IndexerConfig {
   mockRandomnessRelayerKey?: `0x${string}`;
 }
 
+/** Kept comfortably under public RPC providers' free-tier eth_getLogs range
+ * caps (observed as low as ~100 blocks on some, ~10,000 on others) so a
+ * single query is never rejected. */
+const MAX_BLOCK_RANGE = 40n;
+const POLL_INTERVAL_MS = 4_000;
+
 /**
- * Watches GameManager's events and mirrors them into Postgres. The chain
- * remains the source of truth (see ARCHITECTURE.md) - this never writes
- * back on-chain, it only reads and caches for fast queries (game history,
- * leaderboard) and to activate the live WebSocket game room the moment a
- * match actually goes ACTIVE on-chain.
+ * Watches GameManager's events and mirrors them into Postgres, via bounded,
+ * resumable chunked polling rather than viem's `watchContractEvent` - that
+ * helper's default "from last watched block to latest" catch-up range can
+ * silently exceed a public RPC's free-tier eth_getLogs range cap after any
+ * gap (a redeploy, a restart, brief downtime), permanently wedging the
+ * indexer since every subsequent poll keeps retrying the same oversized,
+ * rejected range. Chunking every poll to MAX_BLOCK_RANGE blocks - and
+ * resuming from the highest already-recorded ContractEvent's block (Postgres
+ * itself is the persisted cursor, so this survives restarts) - means no gap,
+ * however long, can desync this beyond "it'll take a few extra polls to
+ * catch up."
+ *
+ * The chain remains the source of truth (see ARCHITECTURE.md) - this never
+ * writes back on-chain, it only reads and caches for fast queries (game
+ * history, leaderboard) and to activate the live WebSocket game room the
+ * moment a match actually goes ACTIVE on-chain.
  *
  * Idempotent by design: every event is first recorded in ContractEvent
  * keyed by (transactionHash, logIndex) - a unique-constraint violation on a
@@ -41,18 +58,53 @@ interface IndexerConfig {
  */
 export function startGameManagerIndexer(config: IndexerConfig) {
   const publicClient = createPublicClient({ chain: config.chain, transport: http(config.rpcUrl) });
+  let stopped = false;
 
-  const unwatch = publicClient.watchContractEvent({
-    address: config.gameManagerAddress,
-    abi: gameManagerAbi,
-    onLogs: (logs) => {
-      for (const log of logs) {
-        void handleLog(config, log as unknown as DecodedLog);
+  (async () => {
+    let cursor = await getStartBlock(config, publicClient);
+    while (!stopped) {
+      try {
+        const latest = await publicClient.getBlockNumber();
+        if (cursor <= latest) {
+          const toBlock = cursor + MAX_BLOCK_RANGE < latest ? cursor + MAX_BLOCK_RANGE : latest;
+          const logs = await publicClient.getContractEvents({
+            address: config.gameManagerAddress,
+            abi: gameManagerAbi,
+            fromBlock: cursor,
+            toBlock,
+          });
+          for (const log of logs) {
+            await handleLog(config, log as unknown as DecodedLog);
+          }
+          cursor = toBlock + 1n;
+        }
+      } catch (err) {
+        console.error("gameManagerIndexer poll error:", err);
       }
-    },
-  });
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+  })();
 
-  return unwatch;
+  return () => {
+    stopped = true;
+  };
+}
+
+/** Resumes from just after the highest block already recorded for this
+ * contract (Postgres survives restarts, so this is a durable cursor without
+ * needing separate cursor-tracking state); if nothing has ever been indexed,
+ * starts from the current tip rather than replaying the contract's entire
+ * history. */
+async function getStartBlock(
+  config: IndexerConfig,
+  publicClient: ReturnType<typeof createPublicClient>,
+): Promise<bigint> {
+  const latestEvent = await prisma.contractEvent.findFirst({
+    where: { contractAddress: config.gameManagerAddress, chainId: config.chain.id },
+    orderBy: { blockNumber: "desc" },
+  });
+  if (latestEvent) return latestEvent.blockNumber + 1n;
+  return publicClient.getBlockNumber();
 }
 
 interface DecodedLog {
