@@ -7,18 +7,65 @@ faucet tBNB, never reused for anything of value):
 
 | Contract | Address |
 |---|---|
-| `PlayerRegistry` | `0x7cC99d855C17ce442Db707038dfA8b6EDf2329a6` |
-| `MockRandomnessProvider` | `0x129CEf49AE0F8990dd0e9FEF0C2b1604ACafB182` |
-| `GameManager` | `0x827a143C5cf778a9E72f362d26bDDa6BD61C6B7F` |
+| `PlayerRegistry` | `0x04B155d2Aa2A3F8E4Cc87185dDA33c98a7ffd99e` |
+| `MockRandomnessProvider` | `0x5E2330F247665938216A9d868F55c230a63322B7` |
+| `GameManager` | `0x659F13336113FdC0AE864C965634D8eF39f4EB84` |
 
 `admin` and `arbiter` on `GameManager`, and `admin` on `PlayerRegistry`, are
 all the deployer address above - a testnet-only convenience, not how a real
 deployment should be arranged (see SECURITY.md's roles section).
 
+Fee wallets on this `GameManager`:
+
+| Wallet | Address | Cut |
+|---|---|---|
+| `ownerFeeWallet` | `0x63c5B98AEfd69658B652d5F35FFda3C6c06847E3` | 5.00% of each player's stake |
+| `platformFeeWallet` | deployer address (placeholder - admin-changeable via `setPlatformFeeWallet`) | 5.00% + any referral level with no registered referrer |
+| `marketingFeeWallet` | `0x0467aE53eaC5A1C46cCC48f1D1C00B3D91F6f74a` | 2.50% of each player's stake |
+
 RPC used: `https://bsc-testnet-rpc.publicnode.com`.
 
 BscScan source verification for these three contracts hasn't been done yet
 - pending.
+
+### Wagering, fees, and referral commissions (real money - read this first)
+
+`GameManager.createGame()` now takes `msg.value` as the per-player stake
+(0 = a free/friendly match, unchanged from before). `joinGame` must send
+exactly that amount. On a completed match, **20% of each player's own
+stake** is deducted (independently per player, from their own stake and
+their own referral chain) and the rest goes to the winner:
+
+| Cut | Bps | Recipient |
+|---|---|---|
+| Owner fee | 500 (5.00%) | `ownerFeeWallet` |
+| Platform fee | 500 (5.00%) | `platformFeeWallet` |
+| Marketing fee | 250 (2.50%) | `marketingFeeWallet` |
+| Referral level 1 | 400 (4.00%) | the player's registered referrer |
+| Referral level 2 | 200 (2.00%) | that referrer's own referrer |
+| Referral level 3 | 150 (1.50%) | that referrer's referrer's referrer |
+
+A player registers who referred them once, ever, via
+`PlayerRegistry.setReferrer(address)` - there's no restriction on who the
+referrer address is, and a referral level with nobody registered falls back
+to `platformFeeWallet` rather than being lost. All payouts (winner,
+fees, referral commissions, and cancellation refunds) are **pull-payments**:
+credited to `pendingWithdrawals[account]` and claimed via `withdraw()`,
+specifically so a single fee-recipient address that reverts on receiving
+BNB can never freeze every match's payout (see `GameManager`'s contract-level
+NatSpec and `contracts/contracts/test/Wagering.t.sol` for the full
+threat-model reasoning and the tests proving it, including a dedicated
+reentrancy test on `withdraw()`).
+
+**Before enabling this on mainnet with real funds**: this is real-money
+wagering with referral commissions, which in most jurisdictions requires a
+gambling license (and the multi-level referral structure specifically often
+sits under separate regulatory scrutiny beyond that, distinct from a
+gambling license alone - the person deploying this is responsible for that
+compliance, not this codebase). A professional third-party security audit
+of this escrow/payout logic is strongly recommended before any real user
+funds are ever at risk here - none has been done yet, this has only been
+tested with Foundry-style unit/fuzz tests in this repo.
 
 ### The MockRandomnessProvider caveat (read this before wiring a backend up)
 
@@ -44,13 +91,17 @@ relayer entirely.
 
 ```bash
 cd backend
+OWNER_FEE_WALLET=0x... PLATFORM_FEE_WALLET=0x... MARKETING_FEE_WALLET=0x... \
 TESTNET_DEPLOYER_KEY=0x... NODE_USE_ENV_PROXY=1 node scripts/deploy-testnet.mjs
 ```
 
 (`NODE_USE_ENV_PROXY=1` is only needed if you're running this behind an
 HTTP(S)_PROXY that Node's built-in `fetch` doesn't pick up automatically -
-harmless otherwise.) Writes `scripts/deployed-addresses.testnet.json`
-(gitignored) with the three addresses and grants `GameManager` the
+harmless otherwise. The three `*_FEE_WALLET` vars all default to the
+deployer address if omitted - `platformFeeWallet` is meant to be changed
+later via `setPlatformFeeWallet` regardless.) Writes
+`scripts/deployed-addresses.testnet.json` (gitignored) with the three
+contract addresses and fee wallets, and grants `GameManager` the
 `GAME_MANAGER_ROLE` on `PlayerRegistry` automatically.
 
 Never point this script, or `MockRandomnessProvider`, at BSC mainnet.

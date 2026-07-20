@@ -16,29 +16,45 @@ contract GameManagerTest is Test {
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
     address internal mallory = makeAddr("mallory");
+    address internal ownerFeeWallet = makeAddr("ownerFeeWallet");
+    address internal platformFeeWallet = makeAddr("platformFeeWallet");
+    address internal marketingFeeWallet = makeAddr("marketingFeeWallet");
 
     function setUp() public {
         playerRegistry = new PlayerRegistry(admin);
         randomnessProvider = new MockRandomnessProvider();
 
         vm.prank(admin);
-        gameManager = new GameManager(admin, arbiter, playerRegistry, randomnessProvider);
+        gameManager = new GameManager(
+            admin, arbiter, playerRegistry, randomnessProvider, ownerFeeWallet, platformFeeWallet, marketingFeeWallet
+        );
 
         bytes32 gameManagerRole = playerRegistry.GAME_MANAGER_ROLE();
         vm.prank(admin);
         playerRegistry.grantRole(gameManagerRole, address(gameManager));
+
+        vm.deal(alice, 1000 ether);
+        vm.deal(bob, 1000 ether);
     }
 
     function _createJoinedGame() internal returns (uint256 gameId) {
-        vm.prank(alice);
-        gameId = gameManager.createGame();
-
-        vm.prank(bob);
-        gameManager.joinGame(gameId);
+        gameId = _createJoinedGameWithStake(0);
     }
 
     function _createActiveGame() internal returns (uint256 gameId) {
-        gameId = _createJoinedGame();
+        gameId = _createActiveGameWithStake(0);
+    }
+
+    function _createJoinedGameWithStake(uint256 stake) internal returns (uint256 gameId) {
+        vm.prank(alice);
+        gameId = gameManager.createGame{value: stake}();
+
+        vm.prank(bob);
+        gameManager.joinGame{value: stake}(gameId);
+    }
+
+    function _createActiveGameWithStake(uint256 stake) internal returns (uint256 gameId) {
+        gameId = _createJoinedGameWithStake(stake);
         vm.prank(alice);
         gameManager.startGame(gameId);
 

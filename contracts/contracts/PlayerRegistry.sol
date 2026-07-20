@@ -24,10 +24,19 @@ contract PlayerRegistry is AccessControl {
     mapping(address player => string displayName) public displayNameOf;
     mapping(address player => Stats stats) public statsOf;
 
+    /// @notice Who referred a given player, if anyone - set at most once per
+    /// player (first call wins) so an existing referral relationship can't be
+    /// reassigned later. Consulted by GameManager to route wagering referral
+    /// commissions; unset for a player just means "no referrer," not an error.
+    mapping(address player => address referrer) public referrerOf;
+
     error DisplayNameTooLong();
+    error ReferrerAlreadySet();
+    error SelfReferral();
 
     event PlayerRegistered(address indexed player, string displayName);
     event ResultRecorded(address indexed winner, address indexed loser);
+    event ReferrerSet(address indexed player, address indexed referrer);
 
     constructor(address admin) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -41,6 +50,23 @@ contract PlayerRegistry is AccessControl {
         if (bytes(displayName).length > MAX_DISPLAY_NAME_LENGTH) revert DisplayNameTooLong();
         displayNameOf[msg.sender] = displayName;
         emit PlayerRegistered(msg.sender, displayName);
+    }
+
+    /// @notice One-time registration of who referred the caller.
+    /// @dev Callable by anyone for themselves, at most once (no reassigning a
+    /// referrer later). `referrer` isn't required to be a known/registered
+    /// player - it's just an address that will receive referral commissions
+    /// from the caller's future wagers, if any. Referral chains (referrer's
+    /// own referrer, and so on) are read by GameManager by walking this
+    /// mapping up to its configured depth - not validated or bounded here, so
+    /// a cycle (A refers B, B refers A) is possible but harmless: it only
+    /// means fixed-percentage commissions circulate between the two, not an
+    /// unbounded loop, since every reader walks a fixed number of levels.
+    function setReferrer(address referrer) external {
+        if (referrerOf[msg.sender] != address(0)) revert ReferrerAlreadySet();
+        if (referrer == msg.sender) revert SelfReferral();
+        referrerOf[msg.sender] = referrer;
+        emit ReferrerSet(msg.sender, referrer);
     }
 
     /// @notice Records a completed match's outcome.

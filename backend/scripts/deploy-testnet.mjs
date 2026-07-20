@@ -1,10 +1,14 @@
-// Deploys PlayerRegistry, MockRandomnessProvider, and GameManager to BSC
-// Testnet (chainId 97). MockRandomnessProvider is dev/testnet-only (see its
-// NatSpec) - this script must never be pointed at BSC mainnet.
+// Deploys PlayerRegistry, MockRandomnessProvider, and GameManager (wagering
+// enabled) to BSC Testnet (chainId 97). MockRandomnessProvider is
+// dev/testnet-only (see its NatSpec) - this script must never be pointed at
+// BSC mainnet.
 //
 // Required env vars:
 //   TESTNET_DEPLOYER_KEY   - funded (testnet BNB) deployer private key
 //   TESTNET_RPC_URL        - defaults to a public BSC testnet RPC
+//   OWNER_FEE_WALLET       - defaults to the deployer address
+//   PLATFORM_FEE_WALLET    - defaults to the deployer address (admin-changeable later via setPlatformFeeWallet)
+//   MARKETING_FEE_WALLET   - defaults to the deployer address
 
 import { createWalletClient, createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -48,8 +52,12 @@ const gameManagerArtifact = loadArtifact(join(artifactsBase, "GameManager.sol", 
 
 const admin = account.address;
 const arbiter = account.address;
+const ownerFeeWallet = process.env.OWNER_FEE_WALLET || admin;
+const platformFeeWallet = process.env.PLATFORM_FEE_WALLET || admin;
+const marketingFeeWallet = process.env.MARKETING_FEE_WALLET || admin;
 
 console.log(`Deploying from ${admin} on chain ${chain.id} (${RPC_URL})`);
+console.log(`Fee wallets - owner: ${ownerFeeWallet}, platform: ${platformFeeWallet}, marketing: ${marketingFeeWallet}`);
 
 const playerRegistry = await deploy(playerRegistryArtifact, [admin]);
 console.log("PlayerRegistry:", playerRegistry.address, playerRegistry.hash);
@@ -57,7 +65,15 @@ console.log("PlayerRegistry:", playerRegistry.address, playerRegistry.hash);
 const randomness = await deploy(mockRandomnessArtifact, []);
 console.log("MockRandomnessProvider:", randomness.address, randomness.hash);
 
-const gameManager = await deploy(gameManagerArtifact, [admin, arbiter, playerRegistry.address, randomness.address]);
+const gameManager = await deploy(gameManagerArtifact, [
+  admin,
+  arbiter,
+  playerRegistry.address,
+  randomness.address,
+  ownerFeeWallet,
+  platformFeeWallet,
+  marketingFeeWallet,
+]);
 console.log("GameManager:", gameManager.address, gameManager.hash);
 
 const roleHash = await publicClient.readContract({
@@ -80,6 +96,9 @@ const output = {
   randomnessAddress: randomness.address,
   gameManagerAddress: gameManager.address,
   deployer: admin,
+  ownerFeeWallet,
+  platformFeeWallet,
+  marketingFeeWallet,
   deployedAt: new Date().toISOString(),
 };
 const outputPath = join(__dirname, "deployed-addresses.testnet.json");

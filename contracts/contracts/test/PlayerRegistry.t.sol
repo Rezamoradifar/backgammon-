@@ -52,6 +52,27 @@ contract PlayerRegistryTest is Test {
         assertEq(bobGames, 1);
     }
 
+    function test_SetReferrer_RecordsReferrer() public {
+        vm.prank(alice);
+        registry.setReferrer(bob);
+        assertEq(registry.referrerOf(alice), bob);
+    }
+
+    function test_RevertWhen_SettingReferrerTwice() public {
+        vm.prank(alice);
+        registry.setReferrer(bob);
+
+        vm.prank(alice);
+        vm.expectRevert(PlayerRegistry.ReferrerAlreadySet.selector);
+        registry.setReferrer(gameManager);
+    }
+
+    function test_RevertWhen_SelfReferring() public {
+        vm.prank(alice);
+        vm.expectRevert(PlayerRegistry.SelfReferral.selector);
+        registry.setReferrer(alice);
+    }
+
     function testFuzz_RepeatedWinsAccumulateCorrectly(uint8 winCount) public {
         winCount = uint8(bound(winCount, 0, 50));
         for (uint256 i = 0; i < winCount; i++) {

@@ -51,7 +51,17 @@ console.log("PlayerRegistry:", playerRegistryAddress);
 const randomnessAddress = await deploy(mockRandomnessArtifact, []);
 console.log("MockRandomnessProvider:", randomnessAddress);
 
-const gameManagerAddress = await deploy(gameManagerArtifact, [admin, arbiter, playerRegistryAddress, randomnessAddress]);
+// Fee wallets all default to the deployer address for local testing - see
+// GameManager's NatSpec for what each one is and setOwner/Platform/MarketingFeeWallet for changing them.
+const gameManagerAddress = await deploy(gameManagerArtifact, [
+  admin,
+  arbiter,
+  playerRegistryAddress,
+  randomnessAddress,
+  admin,
+  admin,
+  admin,
+]);
 console.log("GameManager:", gameManagerAddress);
 
 const roleHash = await publicClient.readContract({
