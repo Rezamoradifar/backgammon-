@@ -1,4 +1,5 @@
-import { createPublicClient, http, type Address, type Chain } from "viem";
+import { createPublicClient, createWalletClient, http, type Address, type Chain } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -8,11 +9,22 @@ import { gameRoomManager } from "../ws/gameRoom.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const gameManagerAbi = JSON.parse(readFileSync(join(__dirname, "abi/GameManager.json"), "utf8"));
+const mockRandomnessAbi = JSON.parse(readFileSync(join(__dirname, "abi/MockRandomnessProvider.json"), "utf8"));
 
 interface IndexerConfig {
   rpcUrl: string;
   chain: Chain;
   gameManagerAddress: Address;
+  /**
+   * Only set while GameManager's active provider is MockRandomnessProvider
+   * (testnet/dev only - see that contract's NatSpec). When present, the
+   * indexer auto-calls `fulfill(requestId)` on every RandomnessRequested
+   * event using `mockRandomnessRelayerKey`, since nothing else ever will;
+   * a real VRF-backed provider calls back on its own and needs neither of
+   * these two fields.
+   */
+  mockRandomnessProviderAddress?: Address;
+  mockRandomnessRelayerKey?: `0x${string}`;
 }
 
 /**
@@ -77,6 +89,9 @@ async function handleLog(config: IndexerConfig, log: DecodedLog): Promise<void> 
     case "GameJoined":
       await onGameJoined(log);
       break;
+    case "RandomnessRequested":
+      await onRandomnessRequested(config, log);
+      break;
     case "GameStarted":
       await onGameStarted(log);
       break;
@@ -132,6 +147,24 @@ async function onGameJoined(log: DecodedLog): Promise<void> {
   const wallet = await findOrCreateWallet(opponent, game.chainId);
   await prisma.gamePlayer.create({ data: { gameId: game.id, walletId: wallet.id, color: "BLACK" } });
   await prisma.game.update({ where: { id: game.id }, data: { state: "CREATED" } });
+}
+
+async function onRandomnessRequested(config: IndexerConfig, log: DecodedLog): Promise<void> {
+  if (!config.mockRandomnessProviderAddress || !config.mockRandomnessRelayerKey) return;
+
+  const requestId = log.args.requestId as bigint;
+  const account = privateKeyToAccount(config.mockRandomnessRelayerKey);
+  const walletClient = createWalletClient({ account, chain: config.chain, transport: http(config.rpcUrl) });
+
+  const hash = await walletClient.writeContract({
+    address: config.mockRandomnessProviderAddress,
+    abi: mockRandomnessAbi,
+    functionName: "fulfill",
+    args: [requestId],
+  });
+
+  const publicClient = createPublicClient({ chain: config.chain, transport: http(config.rpcUrl) });
+  await publicClient.waitForTransactionReceipt({ hash });
 }
 
 async function onGameStarted(log: DecodedLog): Promise<void> {

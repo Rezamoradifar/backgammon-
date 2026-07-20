@@ -12,6 +12,7 @@ contracts/typechain-types/
 backend/dist/
 backend/node_modules/
 backend/scripts/deployed-addresses.local.json
+backend/scripts/deployed-addresses.testnet.json
 
 # frontend
 frontend/.next/

@@ -20,11 +20,13 @@ app.use("/referral", referralRouter);
 const httpServer = createServer(app);
 createWsServer(httpServer);
 
-const { RPC_URL, GAME_MANAGER_ADDRESS, CHAIN_ID } = process.env;
+const { RPC_URL, GAME_MANAGER_ADDRESS, CHAIN_ID, MOCK_RANDOMNESS_PROVIDER_ADDRESS, MOCK_RANDOMNESS_RELAYER_KEY } = process.env;
 if (RPC_URL && GAME_MANAGER_ADDRESS) {
   startGameManagerIndexer({
     rpcUrl: RPC_URL,
     gameManagerAddress: GAME_MANAGER_ADDRESS as `0x${string}`,
+    mockRandomnessProviderAddress: MOCK_RANDOMNESS_PROVIDER_ADDRESS as `0x${string}` | undefined,
+    mockRandomnessRelayerKey: MOCK_RANDOMNESS_RELAYER_KEY as `0x${string}` | undefined,
     chain: {
       id: Number(CHAIN_ID ?? 97),
       name: "configured-chain",
@@ -33,6 +35,9 @@ if (RPC_URL && GAME_MANAGER_ADDRESS) {
     },
   });
   console.log(`Contract event indexer watching ${GAME_MANAGER_ADDRESS} on chain ${CHAIN_ID}`);
+  if (MOCK_RANDOMNESS_PROVIDER_ADDRESS && MOCK_RANDOMNESS_RELAYER_KEY) {
+    console.log(`Auto-fulfilling MockRandomnessProvider requests at ${MOCK_RANDOMNESS_PROVIDER_ADDRESS} (testnet-only stopgap)`);
+  }
 } else {
   console.log("RPC_URL / GAME_MANAGER_ADDRESS not set - contract event indexer is not running");
 }

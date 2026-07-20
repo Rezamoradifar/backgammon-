@@ -15,8 +15,8 @@ limitations.
 | Smart contracts (`GameManager`, `PlayerRegistry`, randomness abstraction) | **Done.** Compiled and tested - 34 tests passing, including fuzz tests. |
 | Backend (Node/TS, Prisma/Postgres, WebSocket matchmaking + move relay, contract indexer) | **Done.** Auth, matchmaking, real-time gameplay relay, and the contract event indexer all verified end-to-end - see `backend/README.md`. |
 | Frontend (Next.js, wagmi/viem/RainbowKit) | **Done.** Landing, lobby (matchmaking -> on-chain game -> live room), gameplay board, leaderboard, history, referral, profile, and settings pages - `tsc`, `eslint`, and `next build` all clean, verified in a real browser. See `frontend/README.md`. |
-| Docker / deployment configuration | Not started. |
-| BNB Chain Testnet deployment | Not done - requires a funded deployer wallet, which only the project owner can supply (see "Deploying" below). |
+| Docker / deployment configuration | **Done.** Backend ships a `Dockerfile`; frontend deploys as a stock Next.js app. See `DEPLOYMENT.md`. |
+| BNB Chain Testnet deployment | **Done.** `PlayerRegistry`, `MockRandomnessProvider`, and `GameManager` are live on BSC Testnet - addresses in `DEPLOYMENT.md`. Hosting the backend/frontend so the deployment is actually reachable is in progress. |
 
 ## Repository layout
 
@@ -62,22 +62,9 @@ blockchain (not mocked) for the contract-indexer test.
 
 ## Deploying
 
-Nothing has been deployed to any network yet. When ready:
-
-1. Copy `contracts/.env.example` to `contracts/.env` and fill in:
-   - `BSC_TESTNET_RPC_URL` / `BSC_MAINNET_RPC_URL` - an RPC endpoint (e.g.
-     from a provider you trust).
-   - `DEPLOYER_PRIVATE_KEY` - **never commit this file, never paste this key
-     anywhere else.** Use a wallet funded with only as much BNB as deployment
-     and testing needs, not a wallet holding significant funds.
-2. Run the deployment script (added alongside the Hardhat Ignition module
-   once the deployment stage is built):
-   ```bash
-   cd contracts
-   npx hardhat run scripts/deploy.ts --network bscTestnet
-   ```
-3. Verify on BscScan using the printed contract addresses and constructor
-   arguments.
+See `DEPLOYMENT.md` for the current BSC Testnet deployment's addresses, how
+to redeploy the contracts yourself, and how to host the backend/frontend
+(Docker + Railway walkthrough this project's first deployment used).
 
 ## License
 
