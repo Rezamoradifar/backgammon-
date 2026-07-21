@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import express from "express";
+import cors from "cors";
 
 import { authRouter } from "./routes/auth.js";
 import { gamesRouter } from "./routes/games.js";
@@ -10,6 +11,17 @@ import { startGameManagerIndexer } from "./indexer/gameManagerIndexer.js";
 import { startWeeklyRewardsScheduler } from "./jobs/weeklyRewards.js";
 
 const app = express();
+// Open to any origin: sessions are stateless bearer JWTs sent via an
+// explicit Authorization header (never cookies), so there's no ambient
+// browser-attached credential for a third-party page to ride on - the
+// usual CORS/CSRF risk that a wildcard origin would otherwise create
+// doesn't apply here. Without this, no browser-based frontend on a
+// different origin (dravon's own domain, or any other host) can complete
+// the SIWE nonce/verify handshake at all - it's silently blocked by the
+// browser before the request ever reaches this server, which is exactly
+// why sign-in behaves fine in server-side tests (no CORS enforcement
+// there) but hangs for real users in a real browser.
+app.use(cors());
 app.use(express.json());
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
