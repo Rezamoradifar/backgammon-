@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma.js";
 import { issueSessionToken } from "../auth/jwt.js";
 import { createWsServer } from "./server.js";
 import { gameRoomManager } from "./gameRoom.js";
+import { createInitialState, getLegalMoves, startTurn } from "../engine/engine.js";
 
 function waitForMessage(socket: WebSocket, predicate: (msg: Record<string, unknown>) => boolean, timeoutMs = 3000) {
   return new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -88,9 +89,13 @@ test("two real WebSocket clients can roll and move through a full server-validat
     blackSocket.send(JSON.stringify({ type: "roll", gameId: game.id }));
 
     const dice = whiteRolled.dice as number[];
-    const die = dice[0];
-    // White's checkers start on points 24, 13, 8, 6 - point 24 moving `die` pips is always a legal opening move.
-    const move = { source: { type: "point", point: 24 }, die, to: 24 - die };
+    // Point 24 -> 24-die isn't always legal (e.g. die=5 lands on point 19,
+    // Black's blocked 5-checker starting point) - compute a genuinely legal
+    // opening move from this exact roll via the real engine instead of
+    // assuming one, so this test isn't flaky on ~1-in-6 real dice rolls.
+    const rolledState = startTurn(createInitialState(), dice);
+    const [move] = getLegalMoves(rolledState, "white");
+    assert.ok(move, "expected at least one legal opening move");
 
     whiteSocket.send(JSON.stringify({ type: "move", gameId: game.id, move }));
     const [whiteMoved, blackMoved] = await Promise.all([
@@ -106,7 +111,7 @@ test("two real WebSocket clients can roll and move through a full server-validat
 
     const persistedMove = await prisma.move.findFirst({ where: { gameId: game.id } });
     assert.ok(persistedMove);
-    assert.equal(persistedMove?.dieValue, die);
+    assert.equal(persistedMove?.dieValue, move.die);
 
     // Confirm the earlier out-of-turn roll from black was rejected: it should have logged a
     // security event rather than mutating state or broadcasting a second "rolled" message.
@@ -114,6 +119,7 @@ test("two real WebSocket clients can roll and move through a full server-validat
     assert.equal(securityEvents.length, 1);
     assert.equal(securityEvents[0].type, "UNAUTHORIZED_ACTION_ATTEMPT");
   } finally {
+    gameRoomManager.stopTurnClock(game.id); // don't leave this test's 60s turn timer running past the test itself
     whiteSocket.close();
     blackSocket.close();
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));

@@ -81,7 +81,8 @@ export function createWsServer(server: import("node:http").Server): WebSocketSer
         case "joinRoom": {
           const color = gameRoomManager.attachSocket(message.gameId, walletId, socket);
           const state = gameRoomManager.getRoomState(message.gameId);
-          socket.send(JSON.stringify({ type: "roomJoined", gameId: message.gameId, color, state: state ?? null }));
+          const turnDeadline = gameRoomManager.getTurnDeadline(message.gameId);
+          socket.send(JSON.stringify({ type: "roomJoined", gameId: message.gameId, color, state: state ?? null, turnDeadline }));
           break;
         }
         case "roll":
