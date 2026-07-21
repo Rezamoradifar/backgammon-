@@ -2,14 +2,16 @@
 
 ## Current testnet deployment (BSC Testnet, chainId 97)
 
-Deployed from a disposable, testnet-only deployer key (holds only free
-faucet tBNB, never reused for anything of value):
+Redeployed to add `distributeWeeklyRewards`/`REWARD_DISTRIBUTOR_ROLE` (the
+previous deployment's addresses are superseded). Deployed from a disposable,
+testnet-only deployer key (holds only free faucet tBNB, never reused for
+anything of value):
 
 | Contract | Address |
 |---|---|
-| `PlayerRegistry` | `0x04B155d2Aa2A3F8E4Cc87185dDA33c98a7ffd99e` |
-| `MockRandomnessProvider` | `0x5E2330F247665938216A9d868F55c230a63322B7` |
-| `GameManager` | `0x659F13336113FdC0AE864C965634D8eF39f4EB84` |
+| `PlayerRegistry` | `0xcaB3B98f2853e7c4f79A38EAc6a90732EEcC9A09` |
+| `MockRandomnessProvider` | `0x31C426845fA42d870FCBE62215a52DE23e7498C2` |
+| `GameManager` | `0xeB4c47679557ccD57C0a985CB5785Adf61aA7633` |
 
 `admin` and `arbiter` on `GameManager`, and `admin` on `PlayerRegistry`, are
 all the deployer address above - a testnet-only convenience, not how a real
@@ -20,8 +22,12 @@ Fee wallets on this `GameManager`:
 | Wallet | Address | Cut |
 |---|---|---|
 | `ownerFeeWallet` | `0x63c5B98AEfd69658B652d5F35FFda3C6c06847E3` | 5.00% of each player's stake |
-| `platformFeeWallet` | deployer address (placeholder - admin-changeable via `setPlatformFeeWallet`) | 5.00% + any referral level with no registered referrer |
+| `platformFeeWallet` | deployer address (placeholder - admin-changeable via `setPlatformFeeWallet`) | 5.00% + any referral level with no registered referrer - now also the weekly reward pool's holding account, see below |
 | `marketingFeeWallet` | `0x0467aE53eaC5A1C46cCC48f1D1C00B3D91F6f74a` | 2.50% of each player's stake |
+
+`REWARD_DISTRIBUTOR_ROLE` is held by the same deployer address (testnet
+convenience, same reasoning as `admin`/`arbiter` above) - the backend's
+`WEEKLY_REWARD_DISTRIBUTOR_KEY` uses this same key on this deployment.
 
 RPC used: `https://bsc-testnet-rpc.publicnode.com`.
 
@@ -152,11 +158,10 @@ any referral-fallback redirects) every settled match exactly as before;
 this job is what turns part of that ongoing balance into a recurring
 players' prize pool instead of a static fee sink.
 
-**Not yet live**: this function exists in `GameManager.sol` and is fully
-tested (see SECURITY.md), but the *currently deployed* testnet contract
-above predates it - redeploying with the new bytecode (and granting
-`REWARD_DISTRIBUTOR_ROLE` to the backend's job wallet) is a pending step,
-see "Deploying the contracts yourself" below.
+**Live**: the deployed `GameManager` above includes this function,
+`REWARD_DISTRIBUTOR_ROLE` is granted to the backend's job wallet, and
+`WEEKLY_REWARD_DISTRIBUTOR_KEY` is set on the live backend - the job is
+running (hourly due-check) against this deployment.
 
 ### The MockRandomnessProvider caveat (read this before wiring a backend up)
 
