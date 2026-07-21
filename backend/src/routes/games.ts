@@ -67,7 +67,7 @@ gamesRouter.get("/history/:address", async (req, res) => {
   const games = await prisma.game.findMany({
     where: { players: { some: { walletId: wallet.id } }, state: { in: ["COMPLETED", "CANCELLED"] } },
     orderBy: { completedAt: "desc" },
-    include: { players: { include: { wallet: true } }, result: true },
+    include: { players: { include: { wallet: true } }, result: { include: { winner: true } } },
     take: 50,
   });
 
@@ -75,8 +75,13 @@ gamesRouter.get("/history/:address", async (req, res) => {
     games.map((g) => ({
       gameId: g.onChainGameId.toString(),
       state: g.state,
+      stake: g.stake.toString(),
+      stakeToken: g.stakeToken,
       players: g.players.map((p) => ({ address: p.wallet.address, color: p.color })),
-      winner: g.result?.winnerId ?? null,
+      // The winner's address - previously returned winnerId (a Wallet uuid),
+      // which the frontend compared against player addresses and could
+      // never match, so every game silently displayed as a loss.
+      winner: g.result?.winner.address ?? null,
       completedAt: g.completedAt,
     })),
   );
