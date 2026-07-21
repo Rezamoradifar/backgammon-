@@ -89,7 +89,10 @@ enum PlayerColor {
 /// itself) wins.
 model Game {
   id               String    @id @default(uuid())
-  onChainGameId    BigInt    @unique
+  /// Unique only per contract, not globally - a redeployed GameManager
+  /// restarts its own gameId numbering from 1, so the same onChainGameId
+  /// value legitimately recurs across different contract addresses.
+  onChainGameId    BigInt
   contractAddress  String
   chainId          Int
   state            GameState @default(WAITING_FOR_PLAYER)
@@ -114,6 +117,7 @@ model Game {
   securityEvents SecurityEvent[]
   contractEvents ContractEvent[]
 
+  @@unique([contractAddress, onChainGameId])
   @@index([state])
   @@map("games")
 }

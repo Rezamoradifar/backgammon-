@@ -129,7 +129,7 @@ async function getStartBlock(
   publicClient: ReturnType<typeof createPublicClient>,
 ): Promise<bigint> {
   const latestEvent = await prisma.contractEvent.findFirst({
-    where: { contractAddress: config.gameManagerAddress, chainId: config.chain.id },
+    where: { contractAddress: config.gameManagerAddress.toLowerCase(), chainId: config.chain.id },
     orderBy: { blockNumber: "desc" },
   });
   if (latestEvent) return latestEvent.blockNumber + 1n;
@@ -148,7 +148,7 @@ async function handleLog(config: IndexerConfig, log: DecodedLog): Promise<void> 
   try {
     await prisma.contractEvent.create({
       data: {
-        contractAddress: config.gameManagerAddress,
+        contractAddress: config.gameManagerAddress.toLowerCase(),
         chainId: config.chain.id,
         eventName: log.eventName,
         blockNumber: log.blockNumber,
@@ -168,26 +168,26 @@ async function handleLog(config: IndexerConfig, log: DecodedLog): Promise<void> 
       await onGameCreated(config, log);
       break;
     case "GameJoined":
-      await onGameJoined(log);
+      await onGameJoined(config, log);
       break;
     case "RandomnessRequested":
       await onRandomnessRequested(config, log);
       break;
     case "GameStarted":
-      await onGameStarted(log);
+      await onGameStarted(config, log);
       break;
     case "ResultConfirmed":
     case "ResultFinalizedByTimeout":
-      await onGameCompleted(log);
+      await onGameCompleted(config, log);
       break;
     case "DisputeResolved":
-      await onGameCompleted(log);
+      await onGameCompleted(config, log);
       break;
     case "GameForfeited":
-      await onGameForfeited(log);
+      await onGameForfeited(config, log);
       break;
     case "GameCancelled":
-      await onGameCancelled(log);
+      await onGameCancelled(config, log);
       break;
   }
 }
@@ -196,9 +196,15 @@ function isUniqueConstraintError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002";
 }
 
-async function findOrThrow(onChainGameId: bigint) {
-  const game = await prisma.game.findUnique({ where: { onChainGameId } });
-  if (!game) throw new Error(`Game not found for onChainGameId=${onChainGameId}`);
+/** onChainGameId alone is not globally unique - a redeployed GameManager
+ * restarts its own numbering from 1, so every lookup must be scoped to the
+ * specific contract address a given event actually came from. */
+async function findOrThrow(config: IndexerConfig, onChainGameId: bigint) {
+  const contractAddress = config.gameManagerAddress.toLowerCase();
+  const game = await prisma.game.findUnique({
+    where: { contractAddress_onChainGameId: { contractAddress, onChainGameId } },
+  });
+  if (!game) throw new Error(`Game not found for onChainGameId=${onChainGameId} on ${contractAddress}`);
   return game;
 }
 
@@ -208,27 +214,41 @@ async function onGameCreated(config: IndexerConfig, log: DecodedLog): Promise<vo
   const stake = (log.args.stake as bigint | undefined) ?? 0n;
   const stakeToken = ((log.args.stakeToken as string | undefined) ?? "0x0000000000000000000000000000000000000000").toLowerCase();
 
-  const game = await prisma.game.create({
-    data: {
-      onChainGameId: gameId,
-      contractAddress: config.gameManagerAddress,
-      chainId: config.chain.id,
-      state: "WAITING_FOR_PLAYER",
-      stake,
-      stakeToken,
-    },
-  });
+  let game;
+  try {
+    game = await prisma.game.create({
+      data: {
+        onChainGameId: gameId,
+        contractAddress: config.gameManagerAddress.toLowerCase(),
+        chainId: config.chain.id,
+        state: "WAITING_FOR_PLAYER",
+        stake,
+        stakeToken,
+      },
+    });
+  } catch (err) {
+    // Same (contractAddress, onChainGameId) already recorded - a replayed
+    // GameCreated event (e.g. after a restart re-fetches an overlapping
+    // block range) whose ContractEvent row happened to fail to insert on a
+    // prior attempt (leaving this game row already created but the poll
+    // loop's cursor un-advanced) rather than a real conflict, since the
+    // chain itself guarantees gameId is unique per contract. Treat as
+    // already-processed instead of throwing and wedging every future poll
+    // on this exact block range forever.
+    if (isUniqueConstraintError(err)) return;
+    throw err;
+  }
 
   const wallet = await findOrCreateWallet(creator, config.chain.id);
   // Convention: player1 (the creator) is always seated WHITE, player2 (the joiner) BLACK.
   await prisma.gamePlayer.create({ data: { gameId: game.id, walletId: wallet.id, color: "WHITE" } });
 }
 
-async function onGameJoined(log: DecodedLog): Promise<void> {
+async function onGameJoined(config: IndexerConfig, log: DecodedLog): Promise<void> {
   const gameId = log.args.gameId as bigint;
   const opponent = (log.args.opponent as string).toLowerCase();
 
-  const game = await findOrThrow(gameId);
+  const game = await findOrThrow(config, gameId);
   const wallet = await findOrCreateWallet(opponent, game.chainId);
   await prisma.gamePlayer.create({ data: { gameId: game.id, walletId: wallet.id, color: "BLACK" } });
   await prisma.game.update({ where: { id: game.id }, data: { state: "CREATED" } });
@@ -252,11 +272,11 @@ async function onRandomnessRequested(config: IndexerConfig, log: DecodedLog): Pr
   await publicClient.waitForTransactionReceipt({ hash });
 }
 
-async function onGameStarted(log: DecodedLog): Promise<void> {
+async function onGameStarted(config: IndexerConfig, log: DecodedLog): Promise<void> {
   const gameId = log.args.gameId as bigint;
   const firstToMove = (log.args.firstToMove as string).toLowerCase();
 
-  const game = await findOrThrow(gameId);
+  const game = await findOrThrow(config, gameId);
   const players = await prisma.gamePlayer.findMany({ where: { gameId: game.id }, include: { wallet: true } });
   const firstMoverColor = players.find((p) => p.wallet.address.toLowerCase() === firstToMove)?.color ?? "WHITE";
 
@@ -272,9 +292,9 @@ async function onGameStarted(log: DecodedLog): Promise<void> {
   }
 }
 
-async function onGameCompleted(log: DecodedLog): Promise<void> {
+async function onGameCompleted(config: IndexerConfig, log: DecodedLog): Promise<void> {
   const gameId = log.args.gameId as bigint;
-  const game = await findOrThrow(gameId);
+  const game = await findOrThrow(config, gameId);
 
   // The chain's Game struct (getGame) has claimedWinner - but this indexer only
   // sees the event args, which don't all carry the winner directly for every
@@ -292,10 +312,10 @@ async function onGameCompleted(log: DecodedLog): Promise<void> {
   await finalizeGame(game.id, winner.walletId, loser.walletId, log.eventName === "DisputeResolved" ? "ARBITER" : log.eventName === "ResultFinalizedByTimeout" ? "TIMEOUT" : "CONFIRMED", log.transactionHash);
 }
 
-async function onGameForfeited(log: DecodedLog): Promise<void> {
+async function onGameForfeited(config: IndexerConfig, log: DecodedLog): Promise<void> {
   const gameId = log.args.gameId as bigint;
   const winnerAddress = (log.args.winner as string).toLowerCase();
-  const game = await findOrThrow(gameId);
+  const game = await findOrThrow(config, gameId);
 
   const players = await prisma.gamePlayer.findMany({ where: { gameId: game.id }, include: { wallet: true } });
   const winner = players.find((p) => p.wallet.address.toLowerCase() === winnerAddress);
@@ -344,9 +364,9 @@ async function finalizeGame(
   });
 }
 
-async function onGameCancelled(log: DecodedLog): Promise<void> {
+async function onGameCancelled(config: IndexerConfig, log: DecodedLog): Promise<void> {
   const gameId = log.args.gameId as bigint;
-  const game = await findOrThrow(gameId);
+  const game = await findOrThrow(config, gameId);
   await prisma.game.update({ where: { id: game.id }, data: { state: "CANCELLED" } });
 }
 

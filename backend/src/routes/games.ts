@@ -5,6 +5,15 @@ import { prisma } from "../lib/prisma.js";
 export const gamesRouter = Router();
 
 /**
+ * onChainGameId is only unique per contract (a redeployed GameManager
+ * restarts its own numbering from 1), so every lookup/list here must be
+ * scoped to the currently-configured contract - otherwise a stale game
+ * left in an open/in-progress state on a superseded GameManager could leak
+ * into the lobby, or a gameId collision could resolve to the wrong match.
+ */
+const CURRENT_GAME_MANAGER_ADDRESS = (process.env.GAME_MANAGER_ADDRESS ?? "").toLowerCase();
+
+/**
  * Open tables - matches waiting for a second player to join, most recent
  * first. This is what powers the lobby's table list (browse and pick a
  * specific match to join, instead of blind auto-matchmaking) - anyone can
@@ -12,7 +21,7 @@ export const gamesRouter = Router();
  */
 gamesRouter.get("/open", async (_req, res) => {
   const games = await prisma.game.findMany({
-    where: { state: "WAITING_FOR_PLAYER" },
+    where: { state: "WAITING_FOR_PLAYER", contractAddress: CURRENT_GAME_MANAGER_ADDRESS },
     orderBy: { createdAt: "desc" },
     include: { players: { include: { wallet: true } } },
     take: 100,
@@ -35,7 +44,7 @@ gamesRouter.get("/open", async (_req, res) => {
  */
 gamesRouter.get("/active", async (_req, res) => {
   const games = await prisma.game.findMany({
-    where: { state: { in: ["CREATED", "ACTIVE", "AWAITING_RESULT"] } },
+    where: { state: { in: ["CREATED", "ACTIVE", "AWAITING_RESULT"] }, contractAddress: CURRENT_GAME_MANAGER_ADDRESS },
     orderBy: { createdAt: "desc" },
     include: { players: { include: { wallet: true } } },
     take: 100,
@@ -104,7 +113,10 @@ gamesRouter.get("/lookup/:onChainGameId", async (req, res) => {
     return;
   }
 
-  const game = await prisma.game.findUnique({ where: { onChainGameId }, include: { players: { include: { wallet: true } } } });
+  const game = await prisma.game.findUnique({
+    where: { contractAddress_onChainGameId: { contractAddress: CURRENT_GAME_MANAGER_ADDRESS, onChainGameId } },
+    include: { players: { include: { wallet: true } } },
+  });
   if (!game) {
     res.status(404).json({ error: "Game not indexed yet" });
     return;
@@ -120,7 +132,9 @@ gamesRouter.get("/lookup/:onChainGameId", async (req, res) => {
 /** Full move-by-move transcript for a single game - the detail the chain deliberately doesn't store. */
 gamesRouter.get("/:onChainGameId/moves", async (req, res) => {
   const onChainGameId = BigInt(req.params.onChainGameId);
-  const game = await prisma.game.findUnique({ where: { onChainGameId } });
+  const game = await prisma.game.findUnique({
+    where: { contractAddress_onChainGameId: { contractAddress: CURRENT_GAME_MANAGER_ADDRESS, onChainGameId } },
+  });
   if (!game) {
     res.status(404).json({ error: "Game not found" });
     return;
