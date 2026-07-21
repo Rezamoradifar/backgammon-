@@ -49,19 +49,67 @@ model Wallet {
 
   createdAt DateTime @default(now())
 
-  gamesAsPlayer   GamePlayer[]
-  movesMade       Move[]
-  diceRolls       DiceRoll[]
-  wonResults      GameResult[]     @relation("WinnerWallet")
-  lostResults     GameResult[]     @relation("LoserWallet")
-  leaderboardRow  LeaderboardEntry?
-  referralsMade   Referral[]       @relation("Referrer")
-  referralOfSelf  Referral?        @relation("Referee")
-  securityEvents  SecurityEvent[]
-  weeklyRewards   WeeklyRewardDistribution[]
+  /// Catalog item id (see backend/src/shop/catalog.ts) of the currently
+  /// equipped skin for each slot - null means the default look. Kept as
+  /// plain strings rather than a relation to the purchase row since a
+  /// purchase is a one-time receipt, while "what's equipped right now" is
+  /// mutable, single-valued state that has nothing to do with when or how
+  /// it was bought.
+  equippedDiceSkin  String?
+  equippedBoardSkin String?
+
+  gamesAsPlayer     GamePlayer[]
+  movesMade         Move[]
+  diceRolls         DiceRoll[]
+  wonResults        GameResult[]     @relation("WinnerWallet")
+  lostResults       GameResult[]     @relation("LoserWallet")
+  leaderboardRow    LeaderboardEntry?
+  referralsMade     Referral[]       @relation("Referrer")
+  referralOfSelf    Referral?        @relation("Referee")
+  securityEvents    SecurityEvent[]
+  weeklyRewards     WeeklyRewardDistribution[]
+  cosmeticPurchases CosmeticPurchase[]
 
   @@index([userId])
   @@map("wallets")
+}
+
+// ---------------------------------------------------------------------
+// Cosmetics shop
+// ---------------------------------------------------------------------
+
+enum CosmeticSlot {
+  DICE
+  BOARD
+}
+
+/// A one-time, real on-chain payment receipt for a cosmetic item. The
+/// catalog (id, slot, price) lives in code (shop/catalog.ts), not the DB -
+/// there's no admin UI to add items dynamically yet, so a hardcoded list
+/// is simpler than a table nobody edits. `txHash` is the actual anti-fraud
+/// mechanism: the purchase route only inserts a row after independently
+/// verifying that exact transaction on-chain (correct sender, treasury
+/// recipient, and amount), and the unique constraint stops the same
+/// payment from ever being redeemed into two grants.
+model CosmeticPurchase {
+  id     String @id @default(uuid())
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  itemId String
+  slot   CosmeticSlot
+
+  txHash      String   @unique
+  /// Smallest-unit amount actually paid, in `token`'s own decimals.
+  amount      BigInt
+  /// address(0) = native BNB, otherwise the ERC-20 payment token's address.
+  token       String
+  purchasedAt DateTime @default(now())
+
+  @@unique([walletId, itemId])
+  @@index([walletId])
+  @@map("cosmetic_purchases")
 }
 
 // ---------------------------------------------------------------------

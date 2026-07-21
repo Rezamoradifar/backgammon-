@@ -6,6 +6,7 @@ import { authRouter } from "./routes/auth.js";
 import { gamesRouter } from "./routes/games.js";
 import { leaderboardRouter } from "./routes/leaderboard.js";
 import { referralRouter } from "./routes/referral.js";
+import { shopRouter } from "./routes/shop.js";
 import { createWsServer } from "./ws/server.js";
 import { startGameManagerIndexer } from "./indexer/gameManagerIndexer.js";
 import { startWeeklyRewardsScheduler } from "./jobs/weeklyRewards.js";
@@ -29,6 +30,7 @@ app.use("/auth", authRouter);
 app.use("/games", gamesRouter);
 app.use("/leaderboard", leaderboardRouter);
 app.use("/referral", referralRouter);
+app.use("/shop", shopRouter);
 
 const httpServer = createServer(app);
 createWsServer(httpServer);

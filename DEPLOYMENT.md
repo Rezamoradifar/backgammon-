@@ -189,6 +189,32 @@ players' prize pool instead of a static fee sink.
 `WEEKLY_REWARD_DISTRIBUTOR_KEY` is set on the live backend - the job is
 running (hourly due-check) against this deployment.
 
+### Cosmetics shop (dice/board skins)
+
+Purely visual dice/board skins, paid for with a real on-chain transaction
+(native BNB, or the same USDT stake token above) - no gameplay effect, and
+no new contract. The catalog lives in code
+(`backend/src/shop/catalog.ts`), not a DB table, since there's no admin UI
+to add items yet.
+
+Purchase flow (`backend/src/routes/shop.ts`):
+1. The frontend sends BNB directly, or calls the USDT token's own
+   `transfer`, to `SHOP_TREASURY_ADDRESS` (defaults to `OWNER_FEE_WALLET` -
+   no reason to stand up a second treasury).
+2. It POSTs the resulting `txHash` to `/shop/purchase`. The backend never
+   trusts this at face value - it independently re-reads that exact
+   transaction from the chain (sender, recipient, and paid amount) before
+   granting the item, the same "read the chain ourselves" posture the
+   contract event indexer uses for game events.
+3. A DB-level unique constraint on `txHash` means a given payment can only
+   ever be redeemed into one item grant, even under concurrent requests.
+
+Env vars: `SHOP_TREASURY_ADDRESS` (or reuse `OWNER_FEE_WALLET`),
+`USDT_TOKEN_ADDRESS` (the same MockUSDT address above). A player's
+in-game level (shown next to their name) is a simple, purely cosmetic
+`floor(sqrt(gamesPlayed)) + 1` derived from existing leaderboard stats -
+no new state, no relation to the shop.
+
 ### The MockRandomnessProvider caveat (read this before wiring a backend up)
 
 `MockRandomnessProvider` is explicitly insecure and dev/testnet-only (see its

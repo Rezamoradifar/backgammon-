@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { prisma } from "../lib/prisma.js";
+import { computeLevel } from "../lib/level.js";
 
 export const leaderboardRouter = Router();
 
@@ -22,6 +23,7 @@ leaderboardRouter.get("/", async (req, res) => {
       gamesPlayed: e.gamesPlayed,
       currentStreak: e.currentStreak,
       bestStreak: e.bestStreak,
+      level: computeLevel(e.gamesPlayed),
     })),
   );
 });
@@ -34,7 +36,7 @@ leaderboardRouter.get("/:address", async (req, res) => {
   // address.
   const wallet = await prisma.wallet.findUnique({ where: { address: address.toLowerCase() }, include: { leaderboardRow: true } });
   if (!wallet?.leaderboardRow) {
-    res.json({ address, wins: 0, losses: 0, gamesPlayed: 0, currentStreak: 0, bestStreak: 0 });
+    res.json({ address, wins: 0, losses: 0, gamesPlayed: 0, currentStreak: 0, bestStreak: 0, level: computeLevel(0) });
     return;
   }
   const row = wallet.leaderboardRow;
@@ -45,5 +47,6 @@ leaderboardRouter.get("/:address", async (req, res) => {
     gamesPlayed: row.gamesPlayed,
     currentStreak: row.currentStreak,
     bestStreak: row.bestStreak,
+    level: computeLevel(row.gamesPlayed),
   });
 });
