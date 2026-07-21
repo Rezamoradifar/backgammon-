@@ -80,6 +80,27 @@ export function startGameManagerIndexer(config: IndexerConfig) {
         }
       } catch (err) {
         console.error("gameManagerIndexer poll error:", err);
+        // A 40-block chunk being *rejected as too wide* is what MAX_BLOCK_RANGE
+        // guards against - but some free-tier RPCs separately refuse to serve
+        // eth_getLogs at all once the requested range is more than a short
+        // window behind their current tip ("archive" access, gated behind a
+        // paid/registered node). If the cursor ever falls behind that window
+        // - a slow poll, a brief outage, anything - every retry keeps hitting
+        // the exact same now-archived range and can never advance again on
+        // its own. Recognizing that specific error and skipping the cursor
+        // forward to near the current tip is what actually breaks the loop:
+        // it trades a small, already-old window of missed events for
+        // resuming live indexing, rather than staying wedged forever.
+        if (isArchiveRequiredError(err)) {
+          const currentTip = await publicClient.getBlockNumber().catch(() => null);
+          if (currentTip !== null && currentTip - cursor > MAX_BLOCK_RANGE) {
+            const skippedFrom = cursor;
+            cursor = currentTip - MAX_BLOCK_RANGE;
+            console.warn(
+              `gameManagerIndexer: RPC refused an archived block range - skipping cursor from ${skippedFrom} to ${cursor} (latest=${currentTip}) to resume live indexing`,
+            );
+          }
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
@@ -88,6 +109,14 @@ export function startGameManagerIndexer(config: IndexerConfig) {
   return () => {
     stopped = true;
   };
+}
+
+/** Matches the specific "this range is old enough to need an archive node"
+ * rejection some public RPCs return for eth_getLogs - distinct from (and
+ * handled separately from) a range simply being too wide. */
+function isArchiveRequiredError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.toLowerCase().includes("archive");
 }
 
 /** Resumes from just after the highest block already recorded for this
