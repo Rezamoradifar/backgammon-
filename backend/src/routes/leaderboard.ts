@@ -28,7 +28,11 @@ leaderboardRouter.get("/", async (req, res) => {
 
 leaderboardRouter.get("/:address", async (req, res) => {
   const address = req.params.address;
-  const wallet = await prisma.wallet.findUnique({ where: { address }, include: { leaderboardRow: true } });
+  // Lowercased for the lookup - Wallet rows are keyed by lowercase address
+  // everywhere (see gameManagerIndexer.ts and auth.ts), since Postgres
+  // string equality is case-sensitive and callers may pass a checksummed
+  // address.
+  const wallet = await prisma.wallet.findUnique({ where: { address: address.toLowerCase() }, include: { leaderboardRow: true } });
   if (!wallet?.leaderboardRow) {
     res.json({ address, wins: 0, losses: 0, gamesPlayed: 0, currentStreak: 0, bestStreak: 0 });
     return;

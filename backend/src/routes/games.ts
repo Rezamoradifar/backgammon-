@@ -55,7 +55,10 @@ gamesRouter.get("/active", async (_req, res) => {
 
 /** Game history for a wallet - completed matches, most recent first. */
 gamesRouter.get("/history/:address", async (req, res) => {
-  const wallet = await prisma.wallet.findUnique({ where: { address: req.params.address } });
+  // Lowercased - Wallet rows are keyed by lowercase address everywhere (see
+  // gameManagerIndexer.ts and auth.ts), since Postgres string equality is
+  // case-sensitive and callers may pass a checksummed address.
+  const wallet = await prisma.wallet.findUnique({ where: { address: req.params.address.toLowerCase() } });
   if (!wallet) {
     res.json([]);
     return;

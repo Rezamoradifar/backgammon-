@@ -27,7 +27,10 @@ referralRouter.post("/claim", requireAuth, async (req, res) => {
   const referrerAddress = getAddress(parsed.data.referrerAddress);
   const refereeWalletId = req.session!.walletId;
 
-  const referrerWallet = await prisma.wallet.findUnique({ where: { address: referrerAddress } });
+  // Lowercased for the lookup - Wallet rows are keyed by lowercase address
+  // everywhere (see gameManagerIndexer.ts and auth.ts), since Postgres
+  // string equality is case-sensitive.
+  const referrerWallet = await prisma.wallet.findUnique({ where: { address: referrerAddress.toLowerCase() } });
   if (!referrerWallet) {
     res.status(404).json({ error: "Referrer wallet is not registered" });
     return;

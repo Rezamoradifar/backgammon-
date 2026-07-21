@@ -27,14 +27,20 @@ authRouter.post("/nonce", async (req, res) => {
     return;
   }
 
+  // Checksummed only for the human-readable text the wallet prompt shows -
+  // every DB read/write below uses the lowercased form, matching the
+  // on-chain event indexer's convention (see gameManagerIndexer.ts), since
+  // Postgres string equality is case-sensitive and these must resolve to
+  // the exact same Wallet row a player's on-chain games are recorded under.
   const address = getAddress(parsed.data.address);
+  const normalizedAddress = address.toLowerCase();
   const nonce = generateNonce();
 
   const wallet = await prisma.wallet.upsert({
-    where: { address },
+    where: { address: normalizedAddress },
     update: { authNonce: nonce, authNonceExpiresAt: nonceExpiry() },
     create: {
-      address,
+      address: normalizedAddress,
       chainId: parsed.data.chainId,
       authNonce: nonce,
       authNonceExpiresAt: nonceExpiry(),
@@ -72,9 +78,10 @@ authRouter.post("/verify", async (req, res) => {
   }
 
   const address = getAddress(parsed.data.address);
+  const normalizedAddress = address.toLowerCase();
   const { message, signature } = parsed.data;
 
-  const wallet = await prisma.wallet.findUnique({ where: { address } });
+  const wallet = await prisma.wallet.findUnique({ where: { address: normalizedAddress } });
   if (!wallet?.authNonce || !wallet.authNonceExpiresAt) {
     res.status(401).json({ error: "No pending login challenge for this address" });
     return;
@@ -100,10 +107,10 @@ authRouter.post("/verify", async (req, res) => {
 
   // Single-use: clear the nonce so this exact signature can never authenticate again.
   await prisma.wallet.update({
-    where: { address },
+    where: { address: normalizedAddress },
     data: { authNonce: null, authNonceExpiresAt: null },
   });
 
-  const token = issueSessionToken({ userId: wallet.userId, walletId: wallet.id, address });
+  const token = issueSessionToken({ userId: wallet.userId, walletId: wallet.id, address: normalizedAddress });
   res.json({ token });
 });
