@@ -31,11 +31,11 @@ contract ReentrantWithdrawer {
         reentryAttempts += 1;
         // Deliberately swallow the revert this should produce - the outer
         // test asserts on this contract's own final balance instead.
-        try gameManager.withdraw() {} catch {}
+        try gameManager.withdraw(address(0)) {} catch {}
     }
 
     function withdraw() external {
-        gameManager.withdraw();
+        gameManager.withdraw(address(0));
     }
 }
 
@@ -131,16 +131,16 @@ contract WageringTest is Test {
         _settle(gameId, alice);
 
         // Direct cuts, doubled (once per player's stake).
-        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet), 2 * (stake * 500 / BPS));
+        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet, address(0)), 2 * (stake * 500 / BPS));
         assertEq(
-            gameManager.pendingWithdrawals(platformFeeWallet),
+            gameManager.pendingWithdrawals(platformFeeWallet, address(0)),
             2 * (stake * 500 / BPS + stake * 400 / BPS + stake * 200 / BPS + stake * 150 / BPS)
         );
-        assertEq(gameManager.pendingWithdrawals(marketingFeeWallet), 2 * (stake * 250 / BPS));
+        assertEq(gameManager.pendingWithdrawals(marketingFeeWallet, address(0)), 2 * (stake * 250 / BPS));
 
         uint256 totalFeePerPlayer = stake * 2000 / BPS; // 20%
         uint256 expectedWinnerPayout = stake * 2 - 2 * totalFeePerPlayer;
-        assertEq(gameManager.pendingWithdrawals(alice), expectedWinnerPayout);
+        assertEq(gameManager.pendingWithdrawals(alice, address(0)), expectedWinnerPayout);
         assertEq(expectedWinnerPayout, stake * 2 * 80 / 100); // 80% of the pot
     }
 
@@ -160,14 +160,14 @@ contract WageringTest is Test {
         uint256 gameId = _createActiveGame(stake);
         _settle(gameId, alice); // alice wins, bob (the referred player) loses - referral pays out from bob's own stake regardless of outcome
 
-        assertEq(gameManager.pendingWithdrawals(refL1), stake * 400 / BPS);
-        assertEq(gameManager.pendingWithdrawals(refL2), stake * 200 / BPS);
-        assertEq(gameManager.pendingWithdrawals(refL3), stake * 150 / BPS);
+        assertEq(gameManager.pendingWithdrawals(refL1, address(0)), stake * 400 / BPS);
+        assertEq(gameManager.pendingWithdrawals(refL2, address(0)), stake * 200 / BPS);
+        assertEq(gameManager.pendingWithdrawals(refL3, address(0)), stake * 150 / BPS);
 
         // Platform only gets alice's (unreferred) fallback share of 7.5%, plus both players' direct 5% platform cut.
         uint256 platformFromAlice = stake * 500 / BPS + stake * (400 + 200 + 150) / BPS;
         uint256 platformFromBob = stake * 500 / BPS; // bob's referral levels all redirected to refL1/L2/L3, not platform
-        assertEq(gameManager.pendingWithdrawals(platformFeeWallet), platformFromAlice + platformFromBob);
+        assertEq(gameManager.pendingWithdrawals(platformFeeWallet, address(0)), platformFromAlice + platformFromBob);
     }
 
     function test_FeeSplit_PartialReferralChain_MissingLevelsFallBackToPlatform() public {
@@ -178,13 +178,13 @@ contract WageringTest is Test {
         uint256 gameId = _createActiveGame(stake);
         _settle(gameId, alice);
 
-        assertEq(gameManager.pendingWithdrawals(refL1), stake * 400 / BPS);
+        assertEq(gameManager.pendingWithdrawals(refL1, address(0)), stake * 400 / BPS);
         // Levels 2 and 3 (unset) redirect to platform, on top of bob's direct 5% and alice's full 7.5% fallback.
         uint256 expectedPlatform = stake * 500 / BPS // alice's platform cut
             + stake * (400 + 200 + 150) / BPS // alice's referral fallback (no referrer at all)
             + stake * 500 / BPS // bob's platform cut
             + stake * (200 + 150) / BPS; // bob's L2+L3 fallback (L1 was paid to refL1)
-        assertEq(gameManager.pendingWithdrawals(platformFeeWallet), expectedPlatform);
+        assertEq(gameManager.pendingWithdrawals(platformFeeWallet, address(0)), expectedPlatform);
     }
 
     // -------------------------------------------------------------------
@@ -195,10 +195,10 @@ contract WageringTest is Test {
         uint256 gameId = _createActiveGame(0);
         _settle(gameId, alice);
 
-        assertEq(gameManager.pendingWithdrawals(alice), 0);
-        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet), 0);
-        assertEq(gameManager.pendingWithdrawals(platformFeeWallet), 0);
-        assertEq(gameManager.pendingWithdrawals(marketingFeeWallet), 0);
+        assertEq(gameManager.pendingWithdrawals(alice, address(0)), 0);
+        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet, address(0)), 0);
+        assertEq(gameManager.pendingWithdrawals(platformFeeWallet, address(0)), 0);
+        assertEq(gameManager.pendingWithdrawals(marketingFeeWallet, address(0)), 0);
     }
 
     // -------------------------------------------------------------------
@@ -212,8 +212,8 @@ contract WageringTest is Test {
         vm.prank(alice);
         gameManager.cancelGame(gameId);
 
-        assertEq(gameManager.pendingWithdrawals(alice), 1 ether);
-        assertEq(gameManager.pendingWithdrawals(bob), 0);
+        assertEq(gameManager.pendingWithdrawals(alice, address(0)), 1 ether);
+        assertEq(gameManager.pendingWithdrawals(bob, address(0)), 0);
     }
 
     function test_CancelGame_AfterJoin_RefundsBothPlayersInFull() public {
@@ -225,8 +225,8 @@ contract WageringTest is Test {
         vm.prank(alice);
         gameManager.cancelGame(gameId);
 
-        assertEq(gameManager.pendingWithdrawals(alice), 1 ether);
-        assertEq(gameManager.pendingWithdrawals(bob), 1 ether);
+        assertEq(gameManager.pendingWithdrawals(alice, address(0)), 1 ether);
+        assertEq(gameManager.pendingWithdrawals(bob, address(0)), 1 ether);
     }
 
     // -------------------------------------------------------------------
@@ -238,19 +238,19 @@ contract WageringTest is Test {
         _settle(gameId, alice);
 
         uint256 before = alice.balance;
-        uint256 credited = gameManager.pendingWithdrawals(alice);
+        uint256 credited = gameManager.pendingWithdrawals(alice, address(0));
 
         vm.prank(alice);
-        gameManager.withdraw();
+        gameManager.withdraw(address(0));
 
         assertEq(alice.balance, before + credited);
-        assertEq(gameManager.pendingWithdrawals(alice), 0);
+        assertEq(gameManager.pendingWithdrawals(alice, address(0)), 0);
     }
 
     function test_RevertWhen_WithdrawingWithNothingCredited() public {
         vm.prank(alice);
         vm.expectRevert(GameManager.NothingToWithdraw.selector);
-        gameManager.withdraw();
+        gameManager.withdraw(address(0));
     }
 
     /// @dev The whole point of the pull-payment pattern: a fee wallet that
@@ -266,18 +266,18 @@ contract WageringTest is Test {
         _settle(gameId, alice); // must succeed even though ownerFeeWallet can never accept a push-payment
 
         assertEq(uint8(gameManager.getGame(gameId).state), uint8(GameManager.State.COMPLETED));
-        assertGt(gameManager.pendingWithdrawals(address(brokenOwnerWallet)), 0);
+        assertGt(gameManager.pendingWithdrawals(address(brokenOwnerWallet), address(0)), 0);
 
         // The winner's own withdrawal is unaffected by the broken wallet.
         uint256 before = alice.balance;
         vm.prank(alice);
-        gameManager.withdraw();
+        gameManager.withdraw(address(0));
         assertGt(alice.balance, before);
 
         // The broken wallet's own withdrawal attempt fails, but only for itself.
         vm.prank(address(brokenOwnerWallet));
         vm.expectRevert(GameManager.TransferFailed.selector);
-        gameManager.withdraw();
+        gameManager.withdraw(address(0));
     }
 
     function test_RevertWhen_ReentrantWithdrawAttemptsDoubleSpend() public {
@@ -300,7 +300,7 @@ contract WageringTest is Test {
         vm.prank(alice);
         gameManager.confirmResult(gameId);
 
-        uint256 credited = gameManager.pendingWithdrawals(address(attacker));
+        uint256 credited = gameManager.pendingWithdrawals(address(attacker), address(0));
         assertGt(credited, 0);
 
         attacker.withdraw();
@@ -308,7 +308,7 @@ contract WageringTest is Test {
         // Exactly one payout's worth landed - the reentrant call inside
         // receive() must not have succeeded in draining a second time.
         assertEq(address(attacker).balance, credited);
-        assertEq(gameManager.pendingWithdrawals(address(attacker)), 0);
+        assertEq(gameManager.pendingWithdrawals(address(attacker), address(0)), 0);
         assertGt(attacker.reentryAttempts(), 0); // confirms the reentrant call was actually attempted
     }
 
@@ -321,9 +321,9 @@ contract WageringTest is Test {
         uint256 gameId = _createActiveGame(stake);
         _settle(gameId, aliceWins ? alice : bob);
 
-        uint256 totalCredited = gameManager.pendingWithdrawals(alice) + gameManager.pendingWithdrawals(bob)
-            + gameManager.pendingWithdrawals(ownerFeeWallet) + gameManager.pendingWithdrawals(platformFeeWallet)
-            + gameManager.pendingWithdrawals(marketingFeeWallet);
+        uint256 totalCredited = gameManager.pendingWithdrawals(alice, address(0)) + gameManager.pendingWithdrawals(bob, address(0))
+            + gameManager.pendingWithdrawals(ownerFeeWallet, address(0)) + gameManager.pendingWithdrawals(platformFeeWallet, address(0))
+            + gameManager.pendingWithdrawals(marketingFeeWallet, address(0));
 
         assertEq(totalCredited, stake * 2);
     }
@@ -347,7 +347,7 @@ contract WageringTest is Test {
         vm.deal(bob, stake + 1 ether);
         uint256 gameId = _createActiveGame(stake);
         _settle(gameId, alice);
-        credited = gameManager.pendingWithdrawals(platformFeeWallet);
+        credited = gameManager.pendingWithdrawals(platformFeeWallet, address(0));
     }
 
     function test_DistributeWeeklyRewards_CreditsWinnersAndDebitsPlatform() public {
@@ -365,12 +365,12 @@ contract WageringTest is Test {
         amounts[2] = 20 ether;
 
         vm.prank(distributor);
-        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+        gameManager.distributeWeeklyRewards(address(0), winners, amounts, 1);
 
-        assertEq(gameManager.pendingWithdrawals(winners[0]), 50 ether);
-        assertEq(gameManager.pendingWithdrawals(winners[1]), 30 ether);
-        assertEq(gameManager.pendingWithdrawals(winners[2]), 20 ether);
-        assertEq(gameManager.pendingWithdrawals(platformFeeWallet), funded - 100 ether);
+        assertEq(gameManager.pendingWithdrawals(winners[0], address(0)), 50 ether);
+        assertEq(gameManager.pendingWithdrawals(winners[1], address(0)), 30 ether);
+        assertEq(gameManager.pendingWithdrawals(winners[2], address(0)), 20 ether);
+        assertEq(gameManager.pendingWithdrawals(platformFeeWallet, address(0)), funded - 100 ether);
     }
 
     function test_RevertWhen_DistributingWithoutRole() public {
@@ -382,7 +382,7 @@ contract WageringTest is Test {
 
         vm.prank(alice); // never granted REWARD_DISTRIBUTOR_ROLE
         vm.expectRevert();
-        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+        gameManager.distributeWeeklyRewards(address(0), winners, amounts, 1);
     }
 
     function test_RevertWhen_DistributingMoreThanPlatformBalance() public {
@@ -397,7 +397,7 @@ contract WageringTest is Test {
 
         vm.prank(distributor);
         vm.expectRevert(GameManager.InsufficientPlatformBalance.selector);
-        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+        gameManager.distributeWeeklyRewards(address(0), winners, amounts, 1);
     }
 
     function test_RevertWhen_DistributingWithMismatchedArrayLengths() public {
@@ -413,7 +413,7 @@ contract WageringTest is Test {
 
         vm.prank(distributor);
         vm.expectRevert(GameManager.ArrayLengthMismatch.selector);
-        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+        gameManager.distributeWeeklyRewards(address(0), winners, amounts, 1);
     }
 
     function test_RevertWhen_DistributingWithEmptyWinnerList() public {
@@ -425,7 +425,7 @@ contract WageringTest is Test {
 
         vm.prank(distributor);
         vm.expectRevert(GameManager.EmptyWinnerList.selector);
-        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+        gameManager.distributeWeeklyRewards(address(0), winners, amounts, 1);
     }
 
     function test_RevertWhen_DistributingToZeroAddress() public {
@@ -440,13 +440,13 @@ contract WageringTest is Test {
 
         vm.prank(distributor);
         vm.expectRevert(GameManager.ZeroAddress.selector);
-        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+        gameManager.distributeWeeklyRewards(address(0), winners, amounts, 1);
     }
 
     function test_DistributeWeeklyRewards_DoesNotAffectOtherBalances() public {
         _fundPlatformFeeWallet(100 ether);
-        uint256 ownerBefore = gameManager.pendingWithdrawals(ownerFeeWallet);
-        uint256 marketingBefore = gameManager.pendingWithdrawals(marketingFeeWallet);
+        uint256 ownerBefore = gameManager.pendingWithdrawals(ownerFeeWallet, address(0));
+        uint256 marketingBefore = gameManager.pendingWithdrawals(marketingFeeWallet, address(0));
         address distributor = makeAddr("distributor");
         _grantRewardDistributor(distributor);
 
@@ -456,9 +456,9 @@ contract WageringTest is Test {
         amounts[0] = 10 ether;
 
         vm.prank(distributor);
-        gameManager.distributeWeeklyRewards(winners, amounts, 1);
+        gameManager.distributeWeeklyRewards(address(0), winners, amounts, 1);
 
-        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet), ownerBefore);
-        assertEq(gameManager.pendingWithdrawals(marketingFeeWallet), marketingBefore);
+        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet, address(0)), ownerBefore);
+        assertEq(gameManager.pendingWithdrawals(marketingFeeWallet, address(0)), marketingBefore);
     }
 }

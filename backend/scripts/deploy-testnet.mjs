@@ -53,6 +53,7 @@ const artifactsBase = join(__dirname, "..", "..", "contracts", "artifacts", "con
 const playerRegistryArtifact = loadArtifact(join(artifactsBase, "PlayerRegistry.sol", "PlayerRegistry.json"));
 const mockRandomnessArtifact = loadArtifact(join(artifactsBase, "randomness", "MockRandomnessProvider.sol", "MockRandomnessProvider.json"));
 const gameManagerArtifact = loadArtifact(join(artifactsBase, "GameManager.sol", "GameManager.json"));
+const mockUsdtArtifact = loadArtifact(join(artifactsBase, "tokens", "MockUSDT.sol", "MockUSDT.json"));
 
 const admin = account.address;
 const arbiter = account.address;
@@ -69,6 +70,11 @@ console.log("PlayerRegistry:", playerRegistry.address, playerRegistry.hash);
 
 const randomness = await deploy(mockRandomnessArtifact, []);
 console.log("MockRandomnessProvider:", randomness.address, randomness.hash);
+
+// BSC Testnet has no canonical Tether deployment - this stands in for it
+// (test-only, same reasoning as MockRandomnessProvider; see its NatSpec).
+const mockUsdt = await deploy(mockUsdtArtifact, []);
+console.log("MockUSDT:", mockUsdt.address, mockUsdt.hash);
 
 const gameManager = await deploy(gameManagerArtifact, [
   admin,
@@ -109,11 +115,21 @@ const rewardGrantHash = await walletClient.writeContract({
 await publicClient.waitForTransactionReceipt({ hash: rewardGrantHash });
 console.log(`Granted REWARD_DISTRIBUTOR_ROLE to ${rewardDistributorAddress}`);
 
+const allowUsdtHash = await walletClient.writeContract({
+  address: gameManager.address,
+  abi: gameManagerArtifact.abi,
+  functionName: "setStakeTokenAllowed",
+  args: [mockUsdt.address, true],
+});
+await publicClient.waitForTransactionReceipt({ hash: allowUsdtHash });
+console.log(`Allowlisted MockUSDT (${mockUsdt.address}) as a stake token`);
+
 const output = {
   chainId: chain.id,
   playerRegistryAddress: playerRegistry.address,
   randomnessAddress: randomness.address,
   gameManagerAddress: gameManager.address,
+  mockUsdtAddress: mockUsdt.address,
   deployer: admin,
   ownerFeeWallet,
   platformFeeWallet,

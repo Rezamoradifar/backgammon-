@@ -102,7 +102,7 @@ enabled - it can decide who wins a disputed, real-money match.
 
 ## Testing
 
-58 tests in `contracts/contracts/test/*.t.sol`, run via
+69 tests in `contracts/contracts/test/*.t.sol`, run via
 `npx hardhat test` (Hardhat 3's built-in Solidity test runner; also
 Foundry-`forge test`-compatible, see ARCHITECTURE.md):
 
@@ -125,6 +125,15 @@ Foundry-`forge test`-compatible, see ARCHITECTURE.md):
   (no `REWARD_DISTRIBUTOR_ROLE`, mismatched array lengths, an empty winner
   list, a zero-address winner, or a requested total exceeding what
   `platformFeeWallet` actually holds).
+- `contracts/contracts/test/ERC20Stake.t.sol` covers the ERC-20 (USDT)
+  stake path specifically: the approve/`transferFrom` escrow flow, the
+  token allowlist gate (`TokenNotAllowed` for an unlisted token, and that
+  revoking allowlist status blocks new games in it), rejecting a native
+  `msg.value` sent alongside an ERC-20-staked `joinGame`, exact fee-split
+  amounts in the token's own smallest unit, and - the property that matters
+  most here - that a single account's BNB and USDT `pendingWithdrawals`
+  balances never mix or bleed into each other, fuzz-tested for fund
+  conservation the same way the BNB path is.
 - Real bugs were found and fixed by this suite before being merged (not
   hypothetical - this is what actually happened building this version):
   1. `MockRandomnessProvider` originally fulfilled synchronously inside

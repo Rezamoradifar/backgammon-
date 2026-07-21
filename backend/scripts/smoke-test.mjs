@@ -99,21 +99,21 @@ console.log("   OK - game reached ACTIVE (randomness auto-fulfilled by the deplo
 console.log("6. Reading fee-wallet balances before settling...");
 const parties = { owner: process.env.OWNER_FEE_WALLET, platform: process.env.PLATFORM_FEE_WALLET, marketing: process.env.MARKETING_FEE_WALLET, winner: player2.address };
 const before = {};
-for (const [k, addr] of Object.entries(parties)) before[k] = await publicClient.readContract({ address: GAME_MANAGER_ADDRESS, abi: gameManagerAbi, functionName: "pendingWithdrawals", args: [addr] });
+for (const [k, addr] of Object.entries(parties)) before[k] = await publicClient.readContract({ address: GAME_MANAGER_ADDRESS, abi: gameManagerAbi, functionName: "pendingWithdrawals", args: [addr, "0x0000000000000000000000000000000000000000"] });
 
 console.log("7. player1 forfeits (deterministic way to settle the wager) - player2 wins...");
 const forfeitHash = await wallet1.writeContract({ address: GAME_MANAGER_ADDRESS, abi: gameManagerAbi, functionName: "forfeitGame", args: [gameId] });
 await publicClient.waitForTransactionReceipt({ hash: forfeitHash });
 
 const after = {};
-for (const [k, addr] of Object.entries(parties)) after[k] = await publicClient.readContract({ address: GAME_MANAGER_ADDRESS, abi: gameManagerAbi, functionName: "pendingWithdrawals", args: [addr] });
+for (const [k, addr] of Object.entries(parties)) after[k] = await publicClient.readContract({ address: GAME_MANAGER_ADDRESS, abi: gameManagerAbi, functionName: "pendingWithdrawals", args: [addr, "0x0000000000000000000000000000000000000000"] });
 const deltas = Object.fromEntries(Object.entries(after).map(([k, v]) => [k, (v - before[k]).toString()]));
 console.log("   OK - credited deltas:", JSON.stringify(deltas));
 if (after.winner <= before.winner) throw new Error("Winner was never credited");
 
 console.log("8. player2 withdraws real BNB...");
 const balBefore = await publicClient.getBalance({ address: player2.address });
-const withdrawHash = await wallet2.writeContract({ address: GAME_MANAGER_ADDRESS, abi: gameManagerAbi, functionName: "withdraw" });
+const withdrawHash = await wallet2.writeContract({ address: GAME_MANAGER_ADDRESS, abi: gameManagerAbi, functionName: "withdraw", args: ["0x0000000000000000000000000000000000000000"] });
 await publicClient.waitForTransactionReceipt({ hash: withdrawHash });
 const balAfter = await publicClient.getBalance({ address: player2.address });
 console.log("   OK - balance", balBefore.toString(), "->", balAfter.toString(), "(tx", withdrawHash, ")");

@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IRandomnessProvider, IRandomnessConsumer} from "./interfaces/IRandomnessProvider.sol";
 import {PlayerRegistry} from "./PlayerRegistry.sol";
 
@@ -15,18 +17,23 @@ import {PlayerRegistry} from "./PlayerRegistry.sol";
 /// optional move-commitment checkpoint, the final agreed result, and (for a
 /// wagered match) the escrowed stake and its payout, so outcomes stay
 /// auditable without paying gas for every dice roll and checker move.
-/// @dev A game's stake is set by its creator via `createGame`'s `msg.value`;
-/// `stake == 0` is a free/friendly match and never touches any of the
-/// payout logic below - see ARCHITECTURE.md and DEPLOYMENT.md for the
-/// wagering design and the licensing/compliance responsibility that sits
-/// with whoever operates a deployment with `stake > 0` enabled.
+/// @dev A game's stake is set by its creator via `createGame`'s `msg.value`
+/// (native BNB) or {createGameERC20}'s `amount` (an allowlisted ERC-20,
+/// e.g. a USDT deployment - see {allowedStakeTokens}); `stake == 0` is a
+/// free/friendly match and never touches any of the payout logic below -
+/// see ARCHITECTURE.md and DEPLOYMENT.md for the wagering design and the
+/// licensing/compliance responsibility that sits with whoever operates a
+/// deployment with `stake > 0` enabled.
 /// @dev All payouts (winner, owner/platform/marketing fees, referral
-/// commissions) are credited to `pendingWithdrawals` and pulled via
-/// {withdraw}, rather than pushed synchronously during {_finalize} or
-/// {cancelGame} - a single fee-recipient address that reverts on receiving
-/// BNB (deliberately or not) must never be able to freeze every match's
-/// payout, since the same three fee wallets are shared across all games.
+/// commissions) are credited to `pendingWithdrawals` (keyed by account
+/// *and* stake token - a BNB match's payouts and a USDT match's payouts
+/// never share a balance) and pulled via {withdraw}, rather than pushed
+/// synchronously during {_finalize} or {cancelGame} - a single
+/// fee-recipient address that reverts (or, for an ERC-20, a transfer that
+/// fails) must never be able to freeze every match's payout, since the
+/// same three fee wallets are shared across all games.
 contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessConsumer {
+    using SafeERC20 for IERC20;
     bytes32 public constant ARBITER_ROLE = keccak256("ARBITER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     /// @dev Granted to the backend's automated weekly-reward job, and only
@@ -78,7 +85,8 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
         uint64 resultSubmittedAt;
         bytes32 movesCommitment;
         uint256 randomnessRequestId;
-        uint256 stake; // per-player wager in wei, set by createGame's msg.value; 0 = free match
+        uint256 stake; // per-player wager in the smallest unit of stakeToken; 0 = free match
+        address stakeToken; // address(0) = native BNB, otherwise an allowlisted ERC-20
     }
 
     PlayerRegistry public immutable playerRegistry;
@@ -88,13 +96,22 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     address public platformFeeWallet;
     address public marketingFeeWallet;
 
+    /// @notice ERC-20 tokens players may stake with via {createGameERC20},
+    /// besides native BNB (which is always allowed). Admin-controlled rather
+    /// than hardcoded so a testnet mock token can be swapped for a real
+    /// mainnet USDT deployment without redeploying this contract.
+    mapping(address token => bool allowed) public allowedStakeTokens;
+
     uint256 private nextGameId = 1;
     mapping(uint256 gameId => Game game) public games;
     mapping(uint256 requestId => uint256 gameId) private gameIdByRequestId;
 
-    /// @notice BNB credited to `account` from a settled wager (winnings, fee,
-    /// or referral commission) or a cancellation refund, pulled via {withdraw}.
-    mapping(address account => uint256 amount) public pendingWithdrawals;
+    /// @notice Amount of `token` (address(0) = native BNB) credited to
+    /// `account` from a settled wager (winnings, fee, or referral
+    /// commission) or a cancellation refund, pulled via {withdraw}. Kept
+    /// per-token so a BNB match's payouts and a USDT match's payouts never
+    /// share, or can be confused with, one another's balance.
+    mapping(address account => mapping(address token => uint256 amount)) public pendingWithdrawals;
 
     error NotAPlayer();
     error NotRandomnessProvider();
@@ -112,8 +129,10 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     error ArrayLengthMismatch();
     error InsufficientPlatformBalance();
     error EmptyWinnerList();
+    error TokenNotAllowed();
+    error NativeValueNotAccepted();
 
-    event GameCreated(uint256 indexed gameId, address indexed creator, uint256 stake);
+    event GameCreated(uint256 indexed gameId, address indexed creator, address stakeToken, uint256 stake);
     event GameJoined(uint256 indexed gameId, address indexed opponent);
     event RandomnessRequested(uint256 indexed gameId, uint256 indexed requestId);
     event GameStarted(uint256 indexed gameId, address indexed firstToMove);
@@ -131,8 +150,9 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     event OwnerFeeWalletUpdated(address indexed previous, address indexed next);
     event PlatformFeeWalletUpdated(address indexed previous, address indexed next);
     event MarketingFeeWalletUpdated(address indexed previous, address indexed next);
-    event Withdrawal(address indexed account, uint256 amount);
-    event WeeklyRewardDistributed(uint256 indexed weekId, address indexed winner, uint256 amount);
+    event Withdrawal(address indexed account, address indexed token, uint256 amount);
+    event WeeklyRewardDistributed(uint256 indexed weekId, address indexed token, address indexed winner, uint256 amount);
+    event StakeTokenAllowedUpdated(address indexed token, bool allowed);
 
     modifier onlyPlayer(uint256 gameId) {
         Game storage game = games[gameId];
@@ -174,30 +194,60 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     // Lifecycle
     // ---------------------------------------------------------------------
 
-    /// @notice Creates a new match and seats the caller as player1.
+    /// @notice Creates a new native-BNB-staked match and seats the caller as
+    /// player1.
     /// @dev `msg.value` becomes the per-player stake for this match; sending
     /// 0 creates a free/friendly match that never touches escrow or fee
-    /// logic. The joiner must send exactly this amount (see {joinGame}).
+    /// logic. The joiner must send exactly this amount (see {joinGame}). For
+    /// an ERC-20-staked match, see {createGameERC20} instead.
     function createGame() external payable whenNotPaused returns (uint256 gameId) {
         gameId = nextGameId++;
         Game storage game = games[gameId];
         game.player1 = msg.sender;
         game.state = State.WAITING_FOR_PLAYER;
         game.stake = msg.value;
-        emit GameCreated(gameId, msg.sender, msg.value);
+        emit GameCreated(gameId, msg.sender, address(0), msg.value);
+    }
+
+    /// @notice Creates a new match staked with an allowlisted ERC-20 token
+    /// (e.g. USDT) and seats the caller as player1.
+    /// @dev Pulls `amount` of `token` from the caller via `transferFrom` -
+    /// the caller must have already `approve`d this contract for at least
+    /// `amount`. `amount == 0` creates a free/friendly match, same as native
+    /// {createGame}. Reverts if `token` isn't in {allowedStakeTokens}.
+    function createGameERC20(address token, uint256 amount) external whenNotPaused returns (uint256 gameId) {
+        if (!allowedStakeTokens[token]) revert TokenNotAllowed();
+
+        gameId = nextGameId++;
+        Game storage game = games[gameId];
+        game.player1 = msg.sender;
+        game.state = State.WAITING_FOR_PLAYER;
+        game.stake = amount;
+        game.stakeToken = token;
+
+        if (amount > 0) IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        emit GameCreated(gameId, msg.sender, token, amount);
     }
 
     /// @notice Seats the caller as player2 on an open match.
     /// @dev The state check alone fully prevents double-joining: a second
     /// join attempt always finds `state != WAITING_FOR_PLAYER` (the first
     /// join already advanced it to CREATED), so no separate "is player2
-    /// already set" check is reachable or needed. Must send exactly the
-    /// creator's stake (0 for a free match) so both sides risk equally.
+    /// already set" check is reachable or needed. Must match the creator's
+    /// stake exactly (0 for a free match) so both sides risk equally - in
+    /// whichever asset (native BNB or ERC-20) the creator chose, read from
+    /// the game itself rather than passed in again here.
     function joinGame(uint256 gameId) external payable whenNotPaused gameExists(gameId) {
         Game storage game = games[gameId];
         if (game.state != State.WAITING_FOR_PLAYER) revert InvalidStateForAction(game.state, State.WAITING_FOR_PLAYER);
         if (msg.sender == game.player1) revert CannotJoinOwnGame();
-        if (msg.value != game.stake) revert StakeMismatch();
+
+        if (game.stakeToken == address(0)) {
+            if (msg.value != game.stake) revert StakeMismatch();
+        } else {
+            if (msg.value != 0) revert NativeValueNotAccepted();
+            if (game.stake > 0) IERC20(game.stakeToken).safeTransferFrom(msg.sender, address(this), game.stake);
+        }
 
         game.player2 = msg.sender;
         game.state = State.CREATED;
@@ -345,8 +395,8 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
 
         game.state = State.CANCELLED;
         if (game.stake > 0) {
-            _credit(game.player1, game.stake);
-            if (state == State.CREATED) _credit(game.player2, game.stake);
+            _credit(game.player1, game.stakeToken, game.stake);
+            if (state == State.CREATED) _credit(game.player2, game.stakeToken, game.stake);
         }
         emit GameCancelled(gameId, msg.sender);
     }
@@ -396,6 +446,15 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
         marketingFeeWallet = newWallet;
     }
 
+    /// @notice Allows or disallows an ERC-20 token as a {createGameERC20}
+    /// stake option (e.g. a USDT deployment). Native BNB is always allowed
+    /// and isn't part of this allowlist.
+    function setStakeTokenAllowed(address token, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (token == address(0)) revert ZeroAddress();
+        allowedStakeTokens[token] = allowed;
+        emit StakeTokenAllowedUpdated(token, allowed);
+    }
+
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
@@ -408,40 +467,50 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     // Withdrawals
     // ---------------------------------------------------------------------
 
-    /// @notice Pulls the caller's full credited balance (winnings, fees,
-    /// referral commissions, or a cancellation refund).
+    /// @notice Pulls the caller's full credited balance of `token`
+    /// (address(0) = native BNB) - winnings, fees, referral commissions, or
+    /// a cancellation refund. A player who played both BNB and USDT matches
+    /// calls this once per token; balances never mix.
     /// @dev Zeroes the balance before sending (checks-effects-interactions),
     /// plus `nonReentrant` as defense in depth.
-    function withdraw() external nonReentrant {
-        uint256 amount = pendingWithdrawals[msg.sender];
+    function withdraw(address token) external nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender][token];
         if (amount == 0) revert NothingToWithdraw();
-        pendingWithdrawals[msg.sender] = 0;
+        pendingWithdrawals[msg.sender][token] = 0;
 
-        (bool ok,) = msg.sender.call{value: amount}("");
-        if (!ok) revert TransferFailed();
-        emit Withdrawal(msg.sender, amount);
+        if (token == address(0)) {
+            (bool ok,) = msg.sender.call{value: amount}("");
+            if (!ok) revert TransferFailed();
+        } else {
+            IERC20(token).safeTransfer(msg.sender, amount);
+        }
+        emit Withdrawal(msg.sender, token, amount);
     }
 
     // ---------------------------------------------------------------------
     // Weekly top-wagerer rewards
     // ---------------------------------------------------------------------
 
-    /// @notice Moves part of platformFeeWallet's own accumulated balance to
-    /// this week's top-wagering-volume winners, as credited
+    /// @notice Moves part of platformFeeWallet's own accumulated balance of
+    /// `token` to this week's top-wagering-volume winners, as credited
     /// `pendingWithdrawals` balances they then pull via {withdraw}.
     /// @dev Restricted to `REWARD_DISTRIBUTOR_ROLE` (the backend's automated
     /// weekly job). Ranking, tier split, and "who qualifies" are all computed
     /// off-chain from indexed `GameCreated`/`GameJoined` stake data - this
     /// function only ever moves already-credited platformFeeWallet balance to
     /// the addresses/amounts it's given, and can never credit more than
-    /// platformFeeWallet actually holds, or touch any other account's
-    /// balance. `weekId` is an opaque caller-chosen identifier (e.g. an ISO
-    /// week number) recorded in the event for off-chain bookkeeping/idempotency;
+    /// platformFeeWallet actually holds of that token, or touch any other
+    /// account's balance. Since BNB and USDT fee pools never mix, the weekly
+    /// job calls this once per token that had wagering volume that week.
+    /// `weekId` is an opaque caller-chosen identifier (e.g. an ISO week
+    /// number) recorded in the event for off-chain bookkeeping/idempotency;
     /// this contract does not itself track which weeks were already paid.
-    function distributeWeeklyRewards(address[] calldata winners, uint256[] calldata amounts, uint256 weekId)
-        external
-        onlyRole(REWARD_DISTRIBUTOR_ROLE)
-    {
+    function distributeWeeklyRewards(
+        address token,
+        address[] calldata winners,
+        uint256[] calldata amounts,
+        uint256 weekId
+    ) external onlyRole(REWARD_DISTRIBUTOR_ROLE) {
         if (winners.length == 0) revert EmptyWinnerList();
         if (winners.length != amounts.length) revert ArrayLengthMismatch();
 
@@ -449,13 +518,13 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
         for (uint256 i; i < amounts.length; i++) {
             total += amounts[i];
         }
-        if (pendingWithdrawals[platformFeeWallet] < total) revert InsufficientPlatformBalance();
+        if (pendingWithdrawals[platformFeeWallet][token] < total) revert InsufficientPlatformBalance();
 
-        pendingWithdrawals[platformFeeWallet] -= total;
+        pendingWithdrawals[platformFeeWallet][token] -= total;
         for (uint256 i; i < winners.length; i++) {
             if (winners[i] == address(0)) revert ZeroAddress();
-            _credit(winners[i], amounts[i]);
-            emit WeeklyRewardDistributed(weekId, winners[i], amounts[i]);
+            _credit(winners[i], token, amounts[i]);
+            emit WeeklyRewardDistributed(weekId, token, winners[i], amounts[i]);
         }
     }
 
@@ -479,10 +548,11 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
 
         uint256 stake = game.stake;
         if (stake > 0) {
+            address token = game.stakeToken;
             uint256 winnerPayout = stake * 2;
-            winnerPayout -= _payFeesForStake(game.player1, stake);
-            winnerPayout -= _payFeesForStake(game.player2, stake);
-            _credit(winner, winnerPayout);
+            winnerPayout -= _payFeesForStake(game.player1, token, stake);
+            winnerPayout -= _payFeesForStake(game.player2, token, stake);
+            _credit(winner, token, winnerPayout);
         }
     }
 
@@ -491,37 +561,37 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     /// subtract it from the pot. Each player's own fee is computed from their
     /// own stake and their own referral chain, independent of the other
     /// player's - see the contract-level NatSpec for why.
-    function _payFeesForStake(address player, uint256 stake) private returns (uint256 totalFee) {
+    function _payFeesForStake(address player, address token, uint256 stake) private returns (uint256 totalFee) {
         uint256 ownerCut = (stake * OWNER_FEE_BPS) / BPS_DENOMINATOR;
         uint256 platformCut = (stake * PLATFORM_FEE_BPS) / BPS_DENOMINATOR;
         uint256 marketingCut = (stake * MARKETING_FEE_BPS) / BPS_DENOMINATOR;
-        _credit(ownerFeeWallet, ownerCut);
-        _credit(platformFeeWallet, platformCut);
-        _credit(marketingFeeWallet, marketingCut);
+        _credit(ownerFeeWallet, token, ownerCut);
+        _credit(platformFeeWallet, token, platformCut);
+        _credit(marketingFeeWallet, token, marketingCut);
 
         address l1 = playerRegistry.referrerOf(player);
         uint256 l1Cut = (stake * REFERRAL_L1_BPS) / BPS_DENOMINATOR;
-        _creditReferralOrFallback(l1, l1Cut);
+        _creditReferralOrFallback(l1, token, l1Cut);
 
         address l2 = l1 != address(0) ? playerRegistry.referrerOf(l1) : address(0);
         uint256 l2Cut = (stake * REFERRAL_L2_BPS) / BPS_DENOMINATOR;
-        _creditReferralOrFallback(l2, l2Cut);
+        _creditReferralOrFallback(l2, token, l2Cut);
 
         address l3 = l2 != address(0) ? playerRegistry.referrerOf(l2) : address(0);
         uint256 l3Cut = (stake * REFERRAL_L3_BPS) / BPS_DENOMINATOR;
-        _creditReferralOrFallback(l3, l3Cut);
+        _creditReferralOrFallback(l3, token, l3Cut);
 
         totalFee = ownerCut + platformCut + marketingCut + l1Cut + l2Cut + l3Cut;
     }
 
     /// @dev A referral level with no registered referrer redirects its cut to
     /// platformFeeWallet instead of leaving it uncredited to anyone.
-    function _creditReferralOrFallback(address referrer, uint256 amount) private {
-        _credit(referrer == address(0) ? platformFeeWallet : referrer, amount);
+    function _creditReferralOrFallback(address referrer, address token, uint256 amount) private {
+        _credit(referrer == address(0) ? platformFeeWallet : referrer, token, amount);
     }
 
-    function _credit(address account, uint256 amount) private {
+    function _credit(address account, address token, uint256 amount) private {
         if (amount == 0) return;
-        pendingWithdrawals[account] += amount;
+        pendingWithdrawals[account][token] += amount;
     }
 }

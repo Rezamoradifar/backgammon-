@@ -2,16 +2,18 @@
 
 ## Current testnet deployment (BSC Testnet, chainId 97)
 
-Redeployed to add `distributeWeeklyRewards`/`REWARD_DISTRIBUTOR_ROLE` (the
-previous deployment's addresses are superseded). Deployed from a disposable,
-testnet-only deployer key (holds only free faucet tBNB, never reused for
-anything of value):
+Redeployed to add ERC-20 (USDT) stake support - `createGameERC20`,
+`allowedStakeTokens`, and per-token `pendingWithdrawals`/`withdraw`/
+`distributeWeeklyRewards` (the previous deployment's addresses are
+superseded). Deployed from a disposable, testnet-only deployer key (holds
+only free faucet tBNB, never reused for anything of value):
 
 | Contract | Address |
 |---|---|
-| `PlayerRegistry` | `0xcaB3B98f2853e7c4f79A38EAc6a90732EEcC9A09` |
-| `MockRandomnessProvider` | `0x31C426845fA42d870FCBE62215a52DE23e7498C2` |
-| `GameManager` | `0xeB4c47679557ccD57C0a985CB5785Adf61aA7633` |
+| `PlayerRegistry` | `0x73d9B06F77521AA0Ff5e04C3593BC2Ba821A1868` |
+| `MockRandomnessProvider` | `0xFc69A338137C82B1F2c6C7e312085ff85A275790` |
+| `MockUSDT` | `0xC097fe10Fcd9Bf1728390Cf742e2A835900929B9` |
+| `GameManager` | `0xFDb66AA580ed444F5295242132AD1c2b3D2CF72B` |
 
 `admin` and `arbiter` on `GameManager`, and `admin` on `PlayerRegistry`, are
 all the deployer address above - a testnet-only convenience, not how a real
@@ -31,8 +33,31 @@ convenience, same reasoning as `admin`/`arbiter` above) - the backend's
 
 RPC used: `https://bsc-testnet-rpc.publicnode.com`.
 
-BscScan source verification for these three contracts hasn't been done yet
-- pending.
+BscScan source verification for these contracts hasn't been done yet -
+pending.
+
+### Staking with USDT instead of BNB
+
+`GameManager` now accepts a match's stake in native BNB (`createGame`,
+unchanged) **or** an admin-allowlisted ERC-20 token (`createGameERC20`,
+new). On this testnet deployment, `MockUSDT` above (a 6-decimal test
+token - BSC Testnet has no canonical Tether deployment, so this stands in
+for it, same reasoning as `MockRandomnessProvider`; never deploy it to
+mainnet) is the only allowlisted stake token, added via
+`setStakeTokenAllowed`. Anyone can mint themselves test funds via its
+public `faucet(uint256 wholeTokens)` function - no admin needed.
+
+Key design point: **BNB and ERC-20 balances never mix.**
+`pendingWithdrawals` is keyed by `(account, token)` - address(0) means
+native BNB - so a player who's won both a BNB match and a USDT match
+withdraws each separately via `withdraw(token)`. The fee split (20% total,
+same bps table as before) and referral chain work identically regardless
+of which asset a match is staked in; each is just computed in that
+token's own smallest unit.
+
+A real deployment swaps `MockUSDT` for the actual USDT contract address on
+the target chain via `setStakeTokenAllowed` - no contract redeploy needed
+for that swap, only redeploy was needed to add ERC-20 support itself.
 
 ## Live deployment (Railway)
 
