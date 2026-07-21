@@ -131,10 +131,10 @@ contract WageringTest is Test {
         _settle(gameId, alice);
 
         // Direct cuts, doubled (once per player's stake).
-        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet, address(0)), 2 * (stake * 500 / BPS));
+        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet, address(0)), 2 * (stake * gameManager.OWNER_FEE_BPS() / BPS));
         assertEq(
             gameManager.pendingWithdrawals(platformFeeWallet, address(0)),
-            2 * (stake * 500 / BPS + stake * 400 / BPS + stake * 200 / BPS + stake * 150 / BPS)
+            2 * (stake * gameManager.PLATFORM_FEE_BPS() / BPS + stake * 400 / BPS + stake * 200 / BPS + stake * 150 / BPS)
         );
         assertEq(gameManager.pendingWithdrawals(marketingFeeWallet, address(0)), 2 * (stake * 250 / BPS));
 
@@ -164,9 +164,9 @@ contract WageringTest is Test {
         assertEq(gameManager.pendingWithdrawals(refL2, address(0)), stake * 200 / BPS);
         assertEq(gameManager.pendingWithdrawals(refL3, address(0)), stake * 150 / BPS);
 
-        // Platform only gets alice's (unreferred) fallback share of 7.5%, plus both players' direct 5% platform cut.
-        uint256 platformFromAlice = stake * 500 / BPS + stake * (400 + 200 + 150) / BPS;
-        uint256 platformFromBob = stake * 500 / BPS; // bob's referral levels all redirected to refL1/L2/L3, not platform
+        // Platform only gets alice's (unreferred) fallback share of 7.5%, plus both players' direct platform cut.
+        uint256 platformFromAlice = stake * gameManager.PLATFORM_FEE_BPS() / BPS + stake * (400 + 200 + 150) / BPS;
+        uint256 platformFromBob = stake * gameManager.PLATFORM_FEE_BPS() / BPS; // bob's referral levels all redirected to refL1/L2/L3, not platform
         assertEq(gameManager.pendingWithdrawals(platformFeeWallet, address(0)), platformFromAlice + platformFromBob);
     }
 
@@ -179,10 +179,10 @@ contract WageringTest is Test {
         _settle(gameId, alice);
 
         assertEq(gameManager.pendingWithdrawals(refL1, address(0)), stake * 400 / BPS);
-        // Levels 2 and 3 (unset) redirect to platform, on top of bob's direct 5% and alice's full 7.5% fallback.
-        uint256 expectedPlatform = stake * 500 / BPS // alice's platform cut
+        // Levels 2 and 3 (unset) redirect to platform, on top of bob's and alice's direct platform cut plus alice's full referral fallback.
+        uint256 expectedPlatform = stake * gameManager.PLATFORM_FEE_BPS() / BPS // alice's platform cut
             + stake * (400 + 200 + 150) / BPS // alice's referral fallback (no referrer at all)
-            + stake * 500 / BPS // bob's platform cut
+            + stake * gameManager.PLATFORM_FEE_BPS() / BPS // bob's platform cut
             + stake * (200 + 150) / BPS; // bob's L2+L3 fallback (L1 was paid to refL1)
         assertEq(gameManager.pendingWithdrawals(platformFeeWallet, address(0)), expectedPlatform);
     }
@@ -339,10 +339,11 @@ contract WageringTest is Test {
     }
 
     function _fundPlatformFeeWallet(uint256 amount) internal returns (uint256 credited) {
-        // A stake of `amount * BPS / PLATFORM_FEE_BPS` credits exactly
-        // `amount` to platformFeeWallet from a single player's cut once that
-        // game is settled - the other player's cut just adds extra headroom.
-        uint256 stake = (amount * BPS) / 500; // 500 = PLATFORM_FEE_BPS, one side's cut
+        // A stake of `amount * BPS / PLATFORM_FEE_BPS` credits at least
+        // `amount` to platformFeeWallet from a single player's direct cut
+        // once that game is settled - the other player's cut, and both
+        // players' unreferred referral fallback, just adds extra headroom.
+        uint256 stake = (amount * BPS) / gameManager.PLATFORM_FEE_BPS();
         vm.deal(alice, stake + 1 ether);
         vm.deal(bob, stake + 1 ether);
         uint256 gameId = _createActiveGame(stake);

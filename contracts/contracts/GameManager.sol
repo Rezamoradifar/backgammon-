@@ -48,8 +48,8 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     /// = 20% of each player's stake; the remaining 80% + 80% (=160% of one
     /// stake, i.e. both stakes minus the 20% total fee) goes to the winner.
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant OWNER_FEE_BPS = 500; // 5.00% -> ownerFeeWallet
-    uint256 public constant PLATFORM_FEE_BPS = 500; // 5.00% -> platformFeeWallet
+    uint256 public constant OWNER_FEE_BPS = 750; // 7.50% -> ownerFeeWallet
+    uint256 public constant PLATFORM_FEE_BPS = 250; // 2.50% -> platformFeeWallet (funds the weekly top-3 prize pool)
     uint256 public constant MARKETING_FEE_BPS = 250; // 2.50% -> marketingFeeWallet
     uint256 public constant REFERRAL_L1_BPS = 400; // 4.00% -> referrer
     uint256 public constant REFERRAL_L2_BPS = 200; // 2.00% -> referrer's referrer

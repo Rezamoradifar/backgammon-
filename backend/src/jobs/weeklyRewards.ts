@@ -17,7 +17,7 @@ const gameManagerAbi = JSON.parse(readFileSync(join(__dirname, "../indexer/abi/G
  * InsufficientPlatformBalance check, which this job's request can never get
  * past regardless of how this estimate drifts from the exact on-chain figure
  * (e.g. from referral-fallback credits also landing in platformFeeWallet). */
-const PLATFORM_FEE_BPS = 500n;
+const PLATFORM_FEE_BPS = 250n;
 const BPS_DENOMINATOR = 10_000n;
 
 /** Top-3 tiered split of the week's reward pool: 1st/2nd/3rd place shares. */

@@ -2,18 +2,19 @@
 
 ## Current testnet deployment (BSC Testnet, chainId 97)
 
-Redeployed to add ERC-20 (USDT) stake support - `createGameERC20`,
-`allowedStakeTokens`, and per-token `pendingWithdrawals`/`withdraw`/
-`distributeWeeklyRewards` (the previous deployment's addresses are
-superseded). Deployed from a disposable, testnet-only deployer key (holds
-only free faucet tBNB, never reused for anything of value):
+Redeployed (GameManager only - PlayerRegistry/MockRandomnessProvider/MockUSDT
+reused as-is, so existing player registry stats and referral registrations
+carry over) to retune the fee split - owner 5%->7.5%, platform 5%->2.5%,
+marketing and referral totals unchanged. Deployed from a disposable,
+testnet-only deployer key (holds only free faucet tBNB, never reused for
+anything of value):
 
 | Contract | Address |
 |---|---|
 | `PlayerRegistry` | `0x73d9B06F77521AA0Ff5e04C3593BC2Ba821A1868` |
 | `MockRandomnessProvider` | `0xFc69A338137C82B1F2c6C7e312085ff85A275790` |
 | `MockUSDT` | `0xC097fe10Fcd9Bf1728390Cf742e2A835900929B9` |
-| `GameManager` | `0xFDb66AA580ed444F5295242132AD1c2b3D2CF72B` |
+| `GameManager` | `0x2D2c6450fFAe4F76D90215aE5A3D3e8Fb5E1cE18` |
 
 `admin` and `arbiter` on `GameManager`, and `admin` on `PlayerRegistry`, are
 all the deployer address above - a testnet-only convenience, not how a real
@@ -23,8 +24,8 @@ Fee wallets on this `GameManager`:
 
 | Wallet | Address | Cut |
 |---|---|---|
-| `ownerFeeWallet` | `0x63c5B98AEfd69658B652d5F35FFda3C6c06847E3` | 5.00% of each player's stake |
-| `platformFeeWallet` | deployer address (placeholder - admin-changeable via `setPlatformFeeWallet`) | 5.00% + any referral level with no registered referrer - now also the weekly reward pool's holding account, see below |
+| `ownerFeeWallet` | `0x63c5B98AEfd69658B652d5F35FFda3C6c06847E3` | 7.50% of each player's stake |
+| `platformFeeWallet` | deployer address (placeholder - admin-changeable via `setPlatformFeeWallet`) | 2.50% + any referral level with no registered referrer - now also the weekly reward pool's holding account, see below |
 | `marketingFeeWallet` | `0x0467aE53eaC5A1C46cCC48f1D1C00B3D91F6f74a` | 2.50% of each player's stake |
 
 `REWARD_DISTRIBUTOR_ROLE` is held by the same deployer address (testnet
@@ -117,8 +118,8 @@ their own referral chain) and the rest goes to the winner:
 
 | Cut | Bps | Recipient |
 |---|---|---|
-| Owner fee | 500 (5.00%) | `ownerFeeWallet` |
-| Platform fee | 500 (5.00%) | `platformFeeWallet` |
+| Owner fee | 750 (7.50%) | `ownerFeeWallet` |
+| Platform fee | 250 (2.50%) | `platformFeeWallet` |
 | Marketing fee | 250 (2.50%) | `marketingFeeWallet` |
 | Referral level 1 | 400 (4.00%) | the player's registered referrer |
 | Referral level 2 | 200 (2.00%) | that referrer's own referrer |
@@ -149,7 +150,7 @@ tested with Foundry-style unit/fuzz tests in this repo.
 ### Weekly top-wagerer rewards
 
 Once a week, the backend's own job (`backend/src/jobs/weeklyRewards.ts`)
-redirects part of `platformFeeWallet`'s own accumulated 5% cut to that
+redirects part of `platformFeeWallet`'s own accumulated 2.5% cut to that
 week's top 3 wagerers by total stake volume, instead of it just sitting
 there indefinitely:
 
@@ -158,7 +159,7 @@ there indefinitely:
    match refunds in full and pays no fee, so it doesn't count as wagering
    volume.
 2. It takes the top 3, and splits a pool - the *smaller* of that week's
-   estimated 5% fee accumulation and whatever `platformFeeWallet` actually
+   estimated 2.5% fee accumulation and whatever `platformFeeWallet` actually
    holds on-chain right now - tiered 50% / 30% / 20% (1st/2nd/3rd).
 3. It calls `GameManager.distributeWeeklyRewards(winners, amounts, weekId)`,
    which **only** moves already-credited `platformFeeWallet` balance to the
@@ -178,7 +179,7 @@ there indefinitely:
 The 50/30/20 tiered split was this codebase's own design choice (the owner
 asked for "tiered, first place gets the most" without specifying exact
 percentages) - change `TIER_SHARES` in `weeklyRewards.ts` if a different
-split is wanted. `platformFeeWallet` still accumulates its normal 5% (plus
+split is wanted. `platformFeeWallet` still accumulates its normal 2.5% (plus
 any referral-fallback redirects) every settled match exactly as before;
 this job is what turns part of that ongoing balance into a recurring
 players' prize pool instead of a static fee sink.

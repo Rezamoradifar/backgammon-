@@ -170,7 +170,7 @@ contract ERC20StakeTest is Test {
         uint256 gameId = _createActiveErc20Game(stake);
         _settle(gameId, alice);
 
-        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet, address(usdt)), 2 * (stake * 500 / BPS));
+        assertEq(gameManager.pendingWithdrawals(ownerFeeWallet, address(usdt)), 2 * (stake * gameManager.OWNER_FEE_BPS() / BPS));
         assertEq(gameManager.pendingWithdrawals(marketingFeeWallet, address(usdt)), 2 * (stake * 250 / BPS));
 
         uint256 totalFeePerPlayer = stake * 2000 / BPS;
