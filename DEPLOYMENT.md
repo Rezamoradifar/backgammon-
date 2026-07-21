@@ -296,8 +296,39 @@ approach) can build directly.
 
 ## Mainnet
 
-Not done, and not something to do casually: `MockRandomnessProvider` must
-first be replaced with a real VRF-backed provider (see ARCHITECTURE.md),
-and the deployer/admin/arbiter roles need to be real, separately-held
+Not done, and not something to do casually. `MockRandomnessProvider` and
+`MockUSDT` are both explicitly dev/testnet-only and must never be pointed
+at from a mainnet deployment - see each contract's own NatSpec. The
+deployer/admin/arbiter roles also need to be real, separately-held
 addresses rather than one throwaway testnet key wearing three hats. See
 SECURITY.md before any mainnet deployment.
+
+### Wiring up Chainlink VRF (`ChainlinkVRFProvider`)
+
+`contracts/randomness/ChainlinkVRFProvider.sol` is the production
+`IRandomnessProvider` - a Chainlink VRF v2.5 subscription consumer (see
+ARCHITECTURE.md's Randomness model section for what it protects against
+and why). To wire it up:
+
+1. Create a VRF subscription for the target chain at vrf.chain.link, and
+   fund it (LINK, or native BNB if you'll set `nativePayment = true`).
+2. Look up that chain's VRF Coordinator address and a keyHash (gas lane)
+   from Chainlink's published docs for the network you're deploying to.
+3. Deploy `ChainlinkVRFProvider(vrfCoordinator, subscriptionId, keyHash,
+   requestConfirmations, callbackGasLimit, nativePayment)`. `3`
+   confirmations and `200_000` callback gas are reasonable starting values;
+   tune `callbackGasLimit` up if `fulfillRandomness`'s own logic ever grows.
+4. On the subscription itself (from its owner), add the deployed
+   `ChainlinkVRFProvider` address as a consumer - Chainlink bills requests
+   to the subscription, not to the provider contract's own balance.
+5. Call `ChainlinkVRFProvider.setConsumerAllowed(gameManagerAddress, true)`
+   - without this, `requestRandomness` rejects every caller, since anyone
+     able to call it could otherwise drain the subscription by spamming
+     requests billed to it.
+6. Call `GameManager.setRandomnessProvider(chainlinkVRFProviderAddress)`
+   (admin-only) to actually switch GameManager over from whatever
+   provider it was using before.
+
+Since `@chainlink/contracts` is only a devDependency needed to compile this
+one contract, it's already in `contracts/package.json` - no extra install
+step at deploy time beyond the usual `npm ci`.

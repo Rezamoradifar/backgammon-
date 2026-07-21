@@ -119,6 +119,7 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
     error InvalidStateForAction(State current, State required);
     error CannotJoinOwnGame();
     error UnknownRandomnessRequest();
+    error RandomnessAlreadyRequested();
     error ConfirmationWindowNotElapsed();
     error ResultAlreadySubmittedByCaller();
     error ZeroAddress();
@@ -242,24 +243,40 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
         if (game.state != State.WAITING_FOR_PLAYER) revert InvalidStateForAction(game.state, State.WAITING_FOR_PLAYER);
         if (msg.sender == game.player1) revert CannotJoinOwnGame();
 
-        if (game.stakeToken == address(0)) {
-            if (msg.value != game.stake) revert StakeMismatch();
-        } else {
-            if (msg.value != 0) revert NativeValueNotAccepted();
-            if (game.stake > 0) IERC20(game.stakeToken).safeTransferFrom(msg.sender, address(this), game.stake);
+        address stakeToken = game.stakeToken;
+        uint256 stake = game.stake;
+        if (stakeToken == address(0)) {
+            if (msg.value != stake) revert StakeMismatch();
+        } else if (msg.value != 0) {
+            revert NativeValueNotAccepted();
         }
 
+        // Effects before the ERC-20 interaction below (checks-effects-
+        // interactions) - matches {createGameERC20}'s own ordering, so a
+        // non-standard stake token with transfer hooks can't re-enter
+        // {joinGame} while this game still looks WAITING_FOR_PLAYER.
         game.player2 = msg.sender;
         game.state = State.CREATED;
+
+        if (stakeToken != address(0) && stake > 0) {
+            IERC20(stakeToken).safeTransferFrom(msg.sender, address(this), stake);
+        }
         emit GameJoined(gameId, msg.sender);
     }
 
     /// @notice Kicks off the match: requests verifiable randomness to fairly
     /// pick who moves first. Either seated player may call this once both
     /// have joined.
+    /// @dev Reverts if a request is already outstanding for this game
+    /// (`randomnessRequestId != 0`) rather than issuing a second one - with a
+    /// real, asynchronous VRF provider (unlike the instantly-fulfilled local
+    /// mock) nothing else stopped both players from racing this and paying
+    /// for two live requests, only one of which {fulfillRandomness} could
+    /// ever accept.
     function startGame(uint256 gameId) external whenNotPaused gameExists(gameId) onlyPlayer(gameId) nonReentrant {
         Game storage game = games[gameId];
         if (game.state != State.CREATED) revert InvalidStateForAction(game.state, State.CREATED);
+        if (game.randomnessRequestId != 0) revert RandomnessAlreadyRequested();
 
         uint256 requestId = randomnessProvider.requestRandomness(gameId);
         game.randomnessRequestId = requestId;
@@ -267,15 +284,28 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
         emit RandomnessRequested(gameId, requestId);
     }
 
-    /// @dev Called back by the configured randomness provider only. Deletes
-    /// the request-id mapping before use so the same requestId can never be
-    /// replayed to re-fulfill (or fulfill a different game).
+    /// @dev Called back by the configured randomness provider only.
+    /// @dev Requires the game to still be CREATED before touching anything -
+    /// a real VRF provider's callback can arrive an arbitrary, attacker-
+    /// influenceable number of blocks after {startGame} requested it (unlike
+    /// the local mock's same-transaction fulfillment), leaving a real window
+    /// for the game to have since been {cancelGame}'d (and its stake already
+    /// refunded) before this callback lands. Without this check, a stale
+    /// fulfillment would still flip a cancelled game to ACTIVE and let it
+    /// later {_finalize} and pay out `game.stake` a second time - the first
+    /// time via the cancellation refund, the second via that resurrected
+    /// finalize - double-crediting `pendingWithdrawals` beyond what the
+    /// contract actually holds. Deletes the request-id mapping only after
+    /// that check passes, so the same requestId can never be replayed to
+    /// re-fulfill (or fulfill a different game) either.
     function fulfillRandomness(uint256 requestId, uint256 gameId, uint256 randomWord) external override {
         if (msg.sender != address(randomnessProvider)) revert NotRandomnessProvider();
         if (gameIdByRequestId[requestId] != gameId) revert UnknownRandomnessRequest();
-        delete gameIdByRequestId[requestId];
 
         Game storage game = games[gameId];
+        if (game.state != State.CREATED) revert InvalidStateForAction(game.state, State.CREATED);
+        delete gameIdByRequestId[requestId];
+
         game.firstToMove = (randomWord % 2 == 0) ? game.player1 : game.player2;
         game.state = State.ACTIVE;
         emit GameStarted(gameId, game.firstToMove);
@@ -394,6 +424,15 @@ contract GameManager is AccessControl, Pausable, ReentrancyGuard, IRandomnessCon
         }
 
         game.state = State.CANCELLED;
+        // Belt-and-suspenders alongside {fulfillRandomness}'s own state
+        // check: a game can reach here with an outstanding randomness
+        // request (startGame doesn't change `state` while awaiting
+        // fulfillment) - drop the mapping now so a since-superseded VRF
+        // callback finds nothing to match instead of relying solely on the
+        // state guard on the other side.
+        if (game.randomnessRequestId != 0) {
+            delete gameIdByRequestId[game.randomnessRequestId];
+        }
         if (game.stake > 0) {
             _credit(game.player1, game.stakeToken, game.stake);
             if (state == State.CREATED) _credit(game.player2, game.stakeToken, game.stake);

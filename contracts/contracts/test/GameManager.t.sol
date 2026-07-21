@@ -161,6 +161,70 @@ contract GameManagerTest is Test {
         gameManager.fulfillRandomness(requestId, gameId, 42); // replay of the same requestId
     }
 
+    function test_RevertWhen_StartingGameTwice() public {
+        uint256 gameId = _createJoinedGame();
+        vm.prank(alice);
+        gameManager.startGame(gameId);
+
+        vm.prank(bob);
+        vm.expectRevert(GameManager.RandomnessAlreadyRequested.selector);
+        gameManager.startGame(gameId);
+    }
+
+    /// @dev With a real (asynchronous) VRF provider, `startGame`'s request
+    /// and its eventual `fulfillRandomness` callback are no longer the same
+    /// transaction (unlike the local mock's instant same-call fulfillment) -
+    /// leaving a real window for the game to be cancelled in between. Before
+    /// this was fixed, a stale fulfillment landing after that cancellation
+    /// would flip the (already refunded) game back to ACTIVE, letting it
+    /// later {_finalize} and pay out the stake a second time.
+    /// `cancelGame` clearing `gameIdByRequestId` is what actually closes the
+    /// door here (surfacing as {UnknownRandomnessRequest}); the state check
+    /// added to {fulfillRandomness} itself is the defense-in-depth backstop
+    /// for any other path that might one day leave that mapping entry
+    /// behind - see {test_CancelGame_ClearsPendingRandomnessRequestMapping}.
+    function test_RevertWhen_FulfillingRandomnessAfterGameWasCancelled() public {
+        uint256 gameId = _createJoinedGameWithStake(1 ether);
+        vm.prank(alice);
+        gameManager.startGame(gameId);
+        uint256 requestId = gameManager.getGame(gameId).randomnessRequestId;
+
+        // Cancellable because `state` is still CREATED - startGame never
+        // changes it while awaiting fulfillment.
+        vm.prank(alice);
+        gameManager.cancelGame(gameId);
+        assertEq(gameManager.pendingWithdrawals(alice, address(0)), 1 ether);
+        assertEq(gameManager.pendingWithdrawals(bob, address(0)), 1 ether);
+
+        vm.prank(address(randomnessProvider));
+        vm.expectRevert(GameManager.UnknownRandomnessRequest.selector);
+        gameManager.fulfillRandomness(requestId, gameId, 42);
+
+        // Still cancelled, and critically, not double-credited beyond the
+        // one refund each already received above.
+        GameManager.Game memory game = gameManager.getGame(gameId);
+        assertEq(uint8(game.state), uint8(GameManager.State.CANCELLED));
+        assertEq(gameManager.pendingWithdrawals(alice, address(0)), 1 ether);
+        assertEq(gameManager.pendingWithdrawals(bob, address(0)), 1 ether);
+    }
+
+    function test_CancelGame_ClearsPendingRandomnessRequestMapping() public {
+        uint256 gameId = _createJoinedGame();
+        vm.prank(alice);
+        gameManager.startGame(gameId);
+        uint256 requestId = gameManager.getGame(gameId).randomnessRequestId;
+
+        vm.prank(alice);
+        gameManager.cancelGame(gameId);
+
+        // The stale request no longer resolves to this (or any) gameId, so
+        // a late fulfillment is rejected as unknown rather than reaching the
+        // state check at all.
+        vm.prank(address(randomnessProvider));
+        vm.expectRevert(GameManager.UnknownRandomnessRequest.selector);
+        gameManager.fulfillRandomness(requestId, gameId, 42);
+    }
+
     // -------------------------------------------------------------------
     // Lifecycle: result submission / confirmation / dispute
     // -------------------------------------------------------------------

@@ -14,4 +14,5 @@ runs = 256
 remappings = [
   "forge-std/=node_modules/forge-std/src/",
   "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@chainlink/contracts/=node_modules/@chainlink/contracts/",
 ]

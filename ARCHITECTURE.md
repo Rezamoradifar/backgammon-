@@ -113,18 +113,35 @@ VRF round for every single roll of a free game.
   mock called back synchronously and it corrupted that bookkeeping, caught by
   the Foundry-style test suite (`test_RevertWhen_ReplayingAFulfilledRandomnessRequest`
   and its siblings).
-- **Production replacement**: point `randomnessProvider` (via
-  `setRandomnessProvider`, admin-only) at a real VRF-backed adapter - e.g. a
-  Chainlink VRF v2.5 subscription consumer implementing the same
-  `IRandomnessProvider` interface, calling back into
-  `GameManager.fulfillRandomness` from the VRF Coordinator. That adapter does
-  not exist in this version; building and auditing it is future work, kept
-  cleanly separate by the interface boundary.
+- **Production replacement**: `ChainlinkVRFProvider`
+  (`contracts/randomness/ChainlinkVRFProvider.sol`) is the real,
+  VRF-backed `IRandomnessProvider` implementation for mainnet - a Chainlink
+  VRF v2.5 subscription consumer. Point `randomnessProvider` at a deployed
+  instance of it (via `setRandomnessProvider`, admin-only) before a mainnet
+  deployment with staking enabled goes live; see its own NatSpec and
+  DEPLOYMENT.md for the subscription setup and consumer-allowlisting steps.
+  It gates `requestRandomness` behind an `allowedConsumers` allowlist (only
+  the deployed `GameManager` should be added) so nothing else can spend the
+  VRF subscription's funds, and its `fulfillRandomWords` callback is only
+  reachable via `VRFConsumerBaseV2Plus`'s own Coordinator-address check -
+  same trust model as `MockRandomnessProvider`'s callback, just backed by a
+  real, unbiasable oracle instead of `blockhash`/`prevrandao`.
 - Replay protection: `GameManager` records `requestId -> gameId` when it
   requests randomness, and deletes that entry the moment it's consumed. A
   second fulfillment attempt with the same `requestId` reverts with
   `UnknownRandomnessRequest`. Only the configured provider address may call
   `fulfillRandomness` at all (`NotRandomnessProvider` otherwise).
+- **Stale-fulfillment guard**: with an asynchronous provider (unlike the
+  mock's same-transaction fulfillment), a real VRF callback can land an
+  arbitrary number of blocks after `startGame` requested it - long enough
+  for the game to have since been `cancelGame`'d (and its stake already
+  refunded) in between. `fulfillRandomness` requires the game to still be
+  `CREATED` before touching anything, and `cancelGame` itself drops the
+  pending `requestId -> gameId` entry, so a stale callback is rejected
+  rather than resurrecting an already-settled game into `ACTIVE` and paying
+  its stake out a second time. `startGame` also refuses to issue a second
+  request while one is already outstanding for the same game
+  (`RandomnessAlreadyRequested`).
 
 ## Game lifecycle (state machine)
 
@@ -213,9 +230,10 @@ described above rather than half-wired-in:
 - **Geographic restrictions**: same - an off-chain, backend-enforced concern
   for staked matches, irrelevant to a free match.
 - **A production randomness provider**: `MockRandomnessProvider` is
-  dev/testnet-only (see its NatSpec and SECURITY.md) - a real deployment
-  with staking enabled needs a real VRF-backed `IRandomnessProvider`
-  swapped in via `setRandomnessProvider` before it's trustworthy.
+  dev/testnet-only (see its NatSpec and SECURITY.md) - done: deploy
+  `ChainlinkVRFProvider` and swap it in via `setRandomnessProvider` before
+  a staking-enabled mainnet deployment goes live (see the Randomness model
+  section above and DEPLOYMENT.md).
 
 None of this is stubbed out with placeholder functions in `GameManager` or
 `PlayerRegistry` - deliberately, so there's no half-finished wagering code
@@ -234,7 +252,8 @@ onchain-backgammon/
 │   │   ├── GameManager.sol
 │   │   ├── PlayerRegistry.sol
 │   │   ├── interfaces/IRandomnessProvider.sol
-│   │   ├── randomness/MockRandomnessProvider.sol
+│   │   ├── randomness/MockRandomnessProvider.sol  (dev/testnet only)
+│   │   ├── randomness/ChainlinkVRFProvider.sol    (mainnet)
 │   │   └── test/*.t.sol  (forge-std style unit + fuzz tests)
 │   ├── hardhat.config.ts
 │   └── foundry.toml
