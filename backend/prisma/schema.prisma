@@ -94,9 +94,13 @@ model Game {
   chainId          Int
   state            GameState @default(WAITING_FOR_PLAYER)
   firstToMoveColor PlayerColor?
-  /// Wei amount from the on-chain GameCreated event's `stake` arg (0 for a
-  /// free/friendly match). Drives the weekly top-wagerer reward ranking.
+  /// Wei/smallest-unit amount from the on-chain GameCreated event's `stake`
+  /// arg (0 for a free/friendly match). Drives the weekly top-wagerer
+  /// reward ranking.
   stake            BigInt    @default(0)
+  /// address(0) = native BNB, otherwise the ERC-20 stake token's address
+  /// (e.g. USDT) - from GameCreated's `stakeToken` arg.
+  stakeToken       String    @default("0x0000000000000000000000000000000000000000")
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

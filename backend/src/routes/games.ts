@@ -4,6 +4,55 @@ import { prisma } from "../lib/prisma.js";
 
 export const gamesRouter = Router();
 
+/**
+ * Open tables - matches waiting for a second player to join, most recent
+ * first. This is what powers the lobby's table list (browse and pick a
+ * specific match to join, instead of blind auto-matchmaking) - anyone can
+ * see these without authenticating, since nothing here is private.
+ */
+gamesRouter.get("/open", async (_req, res) => {
+  const games = await prisma.game.findMany({
+    where: { state: "WAITING_FOR_PLAYER" },
+    orderBy: { createdAt: "desc" },
+    include: { players: { include: { wallet: true } } },
+    take: 100,
+  });
+
+  res.json(
+    games.map((g) => ({
+      gameId: g.onChainGameId.toString(),
+      stake: g.stake.toString(),
+      stakeToken: g.stakeToken,
+      creator: g.players.find((p) => p.color === "WHITE")?.wallet.address ?? null,
+      createdAt: g.createdAt,
+    })),
+  );
+});
+
+/**
+ * Active/in-progress tables (seated but not yet started, or actually being
+ * played) - shown as "live" for visibility, not joinable (already full).
+ */
+gamesRouter.get("/active", async (_req, res) => {
+  const games = await prisma.game.findMany({
+    where: { state: { in: ["CREATED", "ACTIVE", "AWAITING_RESULT"] } },
+    orderBy: { createdAt: "desc" },
+    include: { players: { include: { wallet: true } } },
+    take: 100,
+  });
+
+  res.json(
+    games.map((g) => ({
+      gameId: g.onChainGameId.toString(),
+      state: g.state,
+      stake: g.stake.toString(),
+      stakeToken: g.stakeToken,
+      players: g.players.map((p) => ({ address: p.wallet.address, color: p.color })),
+      startedAt: g.startedAt,
+    })),
+  );
+});
+
 /** Game history for a wallet - completed matches, most recent first. */
 gamesRouter.get("/history/:address", async (req, res) => {
   const wallet = await prisma.wallet.findUnique({ where: { address: req.params.address } });
